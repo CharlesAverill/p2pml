@@ -32,7 +32,7 @@ let () =
                (* ignore self-links *)
                l
              else
-               Unix.inet_addr_of_string (hostname_of_id conn) :: l ) )
+               Unix.inet_addr_of_string (dc_utd_ip_of_id idx) :: l ) )
          (1, []) adj.(self.uuid) )
   in
   (* Socket for receiving machine information requests *)
@@ -47,7 +47,7 @@ let () =
     if not (List.exists (fun (id, _) -> id = i) !connected) then (
       let client_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
       Unix.connect client_sock
-        (Unix.ADDR_INET (Unix.inet_addr_of_string (hostname_of_id i), port)) ;
+        (Unix.ADDR_INET (Unix.inet_addr_of_string (dc_utd_ip_of_id i), port)) ;
       connected := (i, client_sock) :: !connected
     )
   done ;
