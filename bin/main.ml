@@ -28,8 +28,8 @@ let () =
       (Array.fold_left
          (fun (idx, l) conn ->
            ( idx + 1
-           , if idx = self.uuid then
-               (* ignore self-links *)
+           , if idx = self.uuid || conn <> 1 then
+               (* ignore self-links and non-connections *)
                l
              else
                Unix.inet_addr_of_string (dc_utd_ip_of_id idx) :: l ) )
@@ -43,8 +43,7 @@ let () =
   let server_thread = Thread.create (server server_sock self) () in
   (* Connect to other machines *)
   let connected = ref [] in
-  for idx = 0 to List.length to_connect do
-    let i = List.nth to_connect idx in
+  List.iter (fun i -> 
     if not (List.exists (fun (id, _) -> id = i) !connected) then (
       let client_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
       let client_connected = ref false in
@@ -57,8 +56,7 @@ let () =
           Thread.delay 1.
       done ;
       connected := (i, client_sock) :: !connected
-    )
-  done ;
+    )) to_connect ;
   let connected = List.map snd !connected in
   (* Print connection information *)
   print_endline "===Connection Information===" ;
