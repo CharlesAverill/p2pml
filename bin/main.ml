@@ -37,6 +37,7 @@ let () =
   in
   (* Socket for receiving machine information requests *)
   let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt server_sock Unix.SO_REUSEADDR true ;
   Unix.bind server_sock
     (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
   Unix.listen server_sock 32 ;
