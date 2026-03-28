@@ -5,6 +5,8 @@ type path = string
 
 let port = 62631
 
+let bufsize = 1024
+
 let hostname_of_id (id : int) : string =
   if id < 1 || id > 45 then
     fatal rc_Error "Invalid ID"

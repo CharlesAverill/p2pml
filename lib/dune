@@ -1,5 +1,5 @@
 (library
  (name p2pml)
  (public_name p2pml.lib)
- (modules node adjacency common logging)
- (libraries unix str))
+ (modules node adjacency common messages logging)
+ (libraries unix str threads))

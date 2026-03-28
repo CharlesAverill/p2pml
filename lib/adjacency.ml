@@ -15,7 +15,9 @@ let read_adj (p : path) : int array array option =
              (Seq.map
                 (fun c -> int_of_string (String.make 1 c))
                 (String.to_seq line) ) )
-         (In_channel.with_open_text p In_channel.input_lines) )
+         (* (In_channel.with_open_text p In_channel.input_lines) ) *)
+         (String.split_on_char '\n'
+            (String.trim (In_channel.with_open_text p In_channel.input_all)) ) )
   in
   if
     Array.for_all (fun subarr -> Array.length subarr = Array.length arr.(0)) arr

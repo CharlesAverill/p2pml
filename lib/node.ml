@@ -6,6 +6,9 @@ type machine_info = {hostname: string}
 
 let get_machine_info () : machine_info = {hostname= Unix.gethostname ()}
 
+let string_of_machine_info (m : machine_info) : string =
+  Printf.sprintf "=Machine Info=\nHostname: %s" m.hostname
+
 type node =
   { (* Number of nodes in network *) n_nodes: int
   ; (* Unique node id *) uuid: int
@@ -13,6 +16,20 @@ type node =
   ; (* Files in store *) mutable files: path list
   ; (* Handles to connected nodes *) connections: unit option array
   ; (* Machine information *) machine: machine_info }
+
+let string_of_node (n : node) : string =
+  Printf.sprintf
+    "==Node==\n\
+     Network size: %d\n\
+     UUID: %d\n\
+     Root: %s\n\
+     Files: [%s]\n\
+     Connections: %s\n\
+     %s"
+    n.n_nodes n.uuid n.root
+    (String.concat ", " n.files)
+    ""
+    (string_of_machine_info n.machine)
 
 let construct_node (n_nodes : int) : node =
   let machine = get_machine_info () in
