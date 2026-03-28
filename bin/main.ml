@@ -46,8 +46,16 @@ let () =
   for i = 1 to List.length to_connect + 1 do
     if not (List.exists (fun (id, _) -> id = i) !connected) then (
       let client_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-      Unix.connect client_sock
-        (Unix.ADDR_INET (Unix.inet_addr_of_string (dc_utd_ip_of_id i), port)) ;
+      let client_connected = ref false in
+      while not !client_connected do
+        try
+          Unix.connect client_sock
+            (Unix.ADDR_INET (Unix.inet_addr_of_string (dc_utd_ip_of_id i), port)) ;
+          client_connected := true
+        with Unix.Unix_error (Unix.ECONNREFUSED, _, _) ->
+          (* keep retrying *)
+          Thread.delay 1.
+      done ;
       connected := (i, client_sock) :: !connected
     )
   done ;
