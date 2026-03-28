@@ -14,4 +14,4 @@ let rec server (server_sock : Unix.file_descr) (self : node) () : unit =
       ignore (Unix.send client_sock msg 0 (Bytes.length msg) []) ;
       server server_sock self ()
   | _ ->
-      fatal rc_Error "Unrecognized message"
+      fatal rc_Error "Unrecognized message: %s" (String.of_bytes buf)

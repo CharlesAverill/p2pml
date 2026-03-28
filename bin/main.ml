@@ -33,7 +33,7 @@ let () =
                l
              else
                Unix.inet_addr_of_string (dc_utd_ip_of_id idx) :: l ) )
-         (1, []) adj.(self.uuid) )
+         (1, []) adj.(self.uuid - 1) )
   in
   (* Socket for receiving machine information requests *)
   let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
