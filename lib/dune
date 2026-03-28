@@ -1,4 +1,5 @@
 (library
- (name PROJECT_NAME_)
- (public_name PROJECT_NAME_)
- (modules logging))
+ (name p2pml)
+ (public_name p2pml.lib)
+ (modules node adjacency common logging)
+ (libraries unix str))
