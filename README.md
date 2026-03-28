@@ -17,10 +17,11 @@ network topology (see `Part 1 Step 3`).
 
 [main.ml](bin/main.ml) continues to set up the peer-to-peer network
 (see `Part 1 Step 4`). It first creates a server thread to always listen
-for requests (see [server.ml](bin/server.ml)). In the main thread, it 
+for requests (see [server.ml](bin/server.ml)). In the main thread, it
 iterates through the row of the adjacency matrix that corresponds to the
 current node. For each non-zero value, it initiates a connection with the
-corresponding node.
+corresponding node. These connections are made in threads, parallelizing the
+network construction step.
 
 Upon having received machine information from all adjacent nodes, the server thread is re-joined into the main thread.
 
