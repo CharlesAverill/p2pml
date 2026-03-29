@@ -1,0 +1,4 @@
+*.txt
+!01/hello01.txt
+!02/hello02.txt
+!03/hello03.txt

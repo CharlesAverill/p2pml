@@ -33,10 +33,12 @@ let string_of_node (n : node) : string =
 
 let construct_node (n_nodes : int) : node =
   let machine = get_machine_info () in
+  let uuid = id_of_hostname machine.hostname in
+  let root = Printf.sprintf "./stores/%.2d" uuid in
   { n_nodes
-  ; uuid= id_of_hostname machine.hostname
-  ; root= "./"
-  ; files= []
+  ; uuid
+  ; root
+  ; files= List.map (Filename.concat root) (Array.to_list (Sys.readdir root))
   ; connections= Array.init n_nodes (fun _ -> None)
   ; machine }
 
