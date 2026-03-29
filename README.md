@@ -4,10 +4,11 @@ Distributed filesharing protocol in pure OCaml.
 
 All code was written without the assistance of LLMs.
 
-## Design
+## Design Part I
 
 [main.ml](bin/main.ml) is each node's entrypoint.
-It reads the adjacency matrix file path from a command-line argument, opens and parses the file, and validates it (see `Part 1 Step 2`).
+It reads the adjacency matrix file path from a command-line argument, opens and 
+parses the file, and validates it (see `Part 1 Step 2`).
 Validation occurs via a breadth-first search starting from the smallest 
 node. If all nodes are visited, the graph is valid.
 
@@ -23,7 +24,65 @@ current node. For each non-zero value, it initiates a connection with the
 corresponding node. These connections are made in threads, parallelizing the
 network construction step.
 
-Upon having received machine information from all adjacent nodes, the server thread is re-joined into the main thread.
+Upon having received machine information from all adjacent nodes, the server 
+thread is re-joined into the main thread.
+
+## Design Part II
+
+## Design Part II
+ 
+On startup, [node.ml](lib/node.ml) populates the node's `root` field with a
+per-node directory `./stores/<id>` and its `files` list by reading all files
+present in that directory (see `Part 2 Step 3`).
+ 
+[main.ml](bin/main.ml) enters an interactive loop prompting the user for a
+filename. If the file is already present in the node's `files` list (checked
+via `local_search` in [node.ml](lib/node.ml)), it is available locally and no
+network activity is required.
+ 
+Otherwise, [main.ml](bin/main.ml) calls `search` in [search.ml](lib/search.ml),
+which issues a `Search` message carrying a unique UUID, the filename, and the
+current hop-count, initially set to 1 (see `Part 2 Step 1`). The search is
+flooded to all adjacent neighbours via `flood_search`. A timer equal to the
+hop-count in seconds is started.
+ 
+[search.ml](lib/search.ml) maintains a `seen_table` that maps each search UUID
+to the socket it was first received from. When [server.ml](bin/server.ml)
+receives a `Search` message, `handle_search_message` checks the `seen_table`
+to determine whether this UUID has been seen before (see `Part 2 Step 2`).
+Duplicate requests are silently dropped. For the first occurrence, if the
+searched file is present in the node's `files` list, a `SearchResult` message
+carrying the UUID, filename, and local hostname is sent back to the socket the
+request arrived from (see `Part 2 Step 3`). If the file is not present and the
+hop-count is greater than zero, the request is forwarded to all adjacent
+neighbours except the one it arrived from, with the hop-count decremented.
+ 
+When a `SearchResult` message arrives at an intermediate node,
+`handle_search_message` looks up the UUID in the `seen_table` to find the
+socket the original request arrived from and forwards the reply upstream
+(see `Part 2 Step 5`). When the result reaches the initiating node, the UUID
+has no upstream socket entry, so the result is stored in the `results_table`
+(see `Part 2 Step 4`).
+ 
+The initiating node polls all peer sockets using `Unix.select` until the timer
+expires, accumulating all `SearchResult` replies received within that window.
+Replies received after the timer expires are ignored (see `Part 2 Step 6`).
+The collected results are displayed as a numbered list of `(filename, hostname)`
+tuples, and the user is prompted to select one (see `Part 2 Step 7`).
+ 
+[main.ml](bin/main.ml) then calls `download_file` in [search.ml](lib/search.ml),
+which opens a fresh direct TCP stream socket connection to the chosen host,
+sends a `Download` message, and reads the response in chunks until the
+connection closes. On success the file is written to the local store directory
+and its path is appended to `self.files`, making it available for future
+sharing. The direct connection is then closed (see `Part 2 Step 8`).
+ 
+If the timer expires with no replies, the hop-count is doubled and the entire
+process is repeated. This continues until at least one reply is received or the
+hop-count exceeds 16, at which point a "File not found" error is logged
+(see `Part 2 Step 9`). State in the `seen_table` and `results_table` for a
+completed search is removed immediately after the timer expires, ensuring
+stale search state is not retained.
 
 ## Building
 
@@ -52,7 +111,9 @@ dune exec -- p2pml ./example_adj.txt
 
 So dc01 <-> dc02, dc02 <-> dc0{1,3}.
 
-Running the above command on each machine prints out the machine info (e.g. hostname)
+## Part I Log
+
+Running the startup command on each machine prints out the machine info (e.g. hostname)
 from each connected machine:
 
 ### DC01
@@ -115,3 +176,8 @@ Connections:
 =Machine Info=
 Hostname: dc02.utdallas.edu
 ```
+
+## Part II Log
+
+Running the startup command on each machine prints the same machine info as
+before, including files.

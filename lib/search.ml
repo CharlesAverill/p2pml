@@ -113,6 +113,7 @@ let cleanup_results (uuid : int) : unit =
   Mutex.unlock results_mutex
 
 (* Send search messages to all nodes within hop_count distance *)
+(* Part 2 Step 1*)
 let flood_search (uuid : int) (fn : path) (hop_count : int) (own_id : int)
     (adj : int array array) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
     (skip_fd : Unix.file_descr option) : unit =
@@ -140,10 +141,12 @@ let handle_search_message (msg : message) (from_fd : Unix.file_descr)
     : unit =
   match msg with
   | Search (uuid, fn, hop_count) ->
+      (* Part 2 Step 2 *)
       if record_seen uuid (Some from_fd) then
         (* First time we see this search request *)
         let have_file = List.mem fn self_files in
         if have_file then
+          (* Part 2 Step 3 *)
           (* Reply directly back up-stream *)
           send_message from_fd (SearchResult (uuid, fn, own_hostname))
         else if hop_count > 0 then
@@ -155,9 +158,11 @@ let handle_search_message (msg : message) (from_fd : Unix.file_descr)
   | SearchResult (uuid, fn, host) -> (
     match upstream_of uuid with
     | None ->
+        (* Part 2 Step 4 *)
         (* We are the initiator - store the result *)
         add_result uuid fn host
     | Some upstream_fd ->
+        (* Part 2 Step 5 *)
         (* Forward the reply back toward the initiator *)
         send_message upstream_fd (SearchResult (uuid, fn, host)) )
   | _ ->
@@ -184,6 +189,7 @@ let search (fn : path) (own_id : int) (adj : int array array)
       !hop_count timeout ;
     let start = Unix.gettimeofday () in
     flood_search uuid fn !hop_count own_id adj peer_fds None ;
+    (* Part 2 Step 6 *)
     (* Collect replies until timer expires *)
     let deadline = start +. timeout in
     let done_ = ref false in
@@ -222,6 +228,7 @@ let search (fn : path) (own_id : int) (adj : int array array)
     result := get_results uuid ;
     cleanup_results uuid ;
     forget uuid ;
+    (* Part 2 Step 9 *)
     if !result = [] then (
       _log Log_Info "No replies for '%s' at hop-count=%d; doubling." fn
         !hop_count ;

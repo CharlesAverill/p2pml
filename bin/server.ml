@@ -17,19 +17,23 @@ let rec server (server_sock : Unix.file_descr) (self : node)
          while !keep do
            match recv_message client_sock with
            | Some MachineInfo, _ ->
+              _log Log_Info "Received MachineInfo request";
                let msg = Bytes.of_string (string_of_node self) in
                ignore (Unix.send client_sock msg 0 (Bytes.length msg) [])
            | Some (Search (uuid, fn, hops)), _ ->
+              _log Log_Info "Received Searh request (%d, %s, %d)" uuid fn hops;
                handle_search_message
                  (Search (uuid, fn, hops))
                  client_sock self.files self.machine.hostname self.uuid adj
                  !peer_fds
            | Some (SearchResult (uuid, fn, host)), _ ->
+              _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host;
                handle_search_message
                  (SearchResult (uuid, fn, host))
                  client_sock self.files self.machine.hostname self.uuid adj
                  !peer_fds
            | Some (Download fn), _ -> (
+              _log Log_Info "Received Download request (%s)" fn;
                (* Serve file if we have it *)
                let basename = Filename.basename fn in
                match
