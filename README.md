@@ -180,4 +180,102 @@ Hostname: dc02.utdallas.edu
 ## Part II Log
 
 Running the startup command on each machine prints the same machine info as
-before, including files.
+before, now showing files in the local store.
+After this, it prompts the user to request a file from the network.
+Upon submitting a file path, the client searches the network for the file,
+retrieves all possible download options, and then prints them out.
+The user selects an option to download.
+
+### DC01
+```
+{dc01:~/6378/p2pml} dune exec -- p2pml ./example_adj.txt
+LOG:[INFO] - Adjacency matrix represents connected graph
+===Connection Information===
+==Node==
+Network size: 3
+UUID: 2
+Root: ./stores/02
+Files: [./stores/02/hello02.txt]
+Connections: 
+=Machine Info=
+Hostname: dc02.utdallas.edu
+LOG:[INFO] - Received MachineInfo request
+
+>> Request file: ./stores/03/hello03.txt
+LOG:[INFO] - Received MachineInfo request
+LOG:[INFO] - Searching for './stores/03/hello03.txt' with hop-count=1 (timeout=1s)
+LOG:[INFO] - No replies for './stores/03/hello03.txt' at hop-count=1; doubling.
+LOG:[INFO] - Searching for './stores/03/hello03.txt' with hop-count=2 (timeout=2s)
+LOG:[INFO] - Received SearchResult (295261110, ./stores/03/hello03.txt, dc03.utdallas.edu)
+LOG:[INFO] - SearchResult for './stores/03/hello03.txt' reached initiator (from dc03.utdallas.edu)
+
+Search results:
+  0) ./stores/03/hello03.txt @ dc03.utdallas.edu
+
+>> Select index to download from (0-0): 0
+LOG:[INFO] - Downloaded './stores/03/hello03.txt' -> './stores/01/hello03.txt'
+LOG:[INFO] - Saved to './stores/01/hello03.txt'. File added to share list.
+```
+
+### DC02
+```
+{dc02:~/6378/p2pml} dune exec -- p2pml ./example_adj.txt
+LOG:[INFO] - Adjacency matrix represents connected graph
+LOG:[INFO] - Received MachineInfo request
+LOG:[INFO] - Received MachineInfo request
+===Connection Information===
+==Node==
+Network size: 3
+UUID: 3
+Root: ./stores/03
+Files: [./stores/03/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc03.utdallas.edu
+==Node==
+Network size: 3
+UUID: 1
+Root: ./stores/01
+Files: [./stores/01/hello01.txt]
+Connections: 
+=Machine Info=
+Hostname: dc01.utdallas.edu
+
+>> Request file:
+LOG:[INFO] - Received Search request (70360265, ./stores/03/hello03.txt, 0)
+LOG:[INFO] - Received Search request (70360265, ./stores/03/hello03.txt, 0)
+LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 1)
+LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 1)
+LOG:[INFO] - Received SearchResult (295261110, ./stores/03/hello03.txt, dc03.utdallas.edu)
+LOG:[INFO] - Forwarding SearchResult for './stores/03/hello03.txt' upstream to 10.182.157.
+```
+
+### DC03
+```
+{dc03:~/6378/p2pml} dune exec -- p2pml ./example_adj.txt
+LOG:[INFO] - Adjacency matrix represents connected graph
+===Connection Information===
+==Node==
+Network size: 3
+UUID: 2
+Root: ./stores/02
+Files: [./stores/02/hello02.txt]
+Connections: 
+=Machine Info=
+Hostname: dc02.utdallas.edu
+==Node==
+Network size: 3
+UUID: 1
+Root: ./stores/01
+Files: [./stores/01/hello01.txt]
+Connections: 
+=Machine Info=
+Hostname: dc01.utdallas.edu
+LOG:[INFO] - Received MachineInfo request
+
+>> Request file:
+LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 0)
+LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 0)
+LOG:[INFO] - Found './stores/03/hello03.txt', sending SearchResult to 10.182.157.5
+LOG:[INFO] - Received Download request (./stores/03/hello03.txt)
+```
