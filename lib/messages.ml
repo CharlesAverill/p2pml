@@ -1,4 +1,5 @@
 open Common
+open Logging
 
 (* Messages sent between machines *)
 type message =
@@ -100,6 +101,7 @@ let message_of_bytes (b : bytes) : message option =
       None
 
 let send_message (fd : Unix.file_descr) (msg : message) : unit =
+  _log Log_Debug "Sending message: %s" (String.of_bytes (bytes_of_message msg)) ;
   ignore
     (Unix.send fd (bytes_of_message msg) 0
        (Bytes.length (bytes_of_message msg))

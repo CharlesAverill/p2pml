@@ -51,24 +51,33 @@ let nodes_at_dist i adj dist_val : int list =
         None )
     (List.init (Array.length adj) (fun j -> j))
 
-let seen_table : (int, Unix.file_descr option) Hashtbl.t = Hashtbl.create 64
+(* Maps search UUID -> address of node we received it from.
+   None means we are the initiator. *)
+let seen_table : (int, Unix.inet_addr option) Hashtbl.t = Hashtbl.create 64
 
 let seen_mutex : Mutex.t = Mutex.create ()
 
-(* Record that we have visited uuid *)
-let record_seen (uuid : int) (from_fd : Unix.file_descr option) : bool =
+(* Record that we have seen uuid coming from from_addr.
+   Returns true if this is the first time we've seen this uuid. *)
+let record_seen (uuid : int) (from_addr : Unix.inet_addr option) : bool =
   Mutex.lock seen_mutex ;
   let fresh = not (Hashtbl.mem seen_table uuid) in
-  if fresh then Hashtbl.add seen_table uuid from_fd ;
+  if fresh then Hashtbl.add seen_table uuid from_addr ;
   Mutex.unlock seen_mutex ;
   fresh
 
-(* Get socket associated with a request for download *)
-let upstream_of (uuid : int) : Unix.file_descr option =
+(* Get the address to forward a SearchResult back toward the initiator.
+   Returns None if we are the initiator. *)
+let upstream_of (uuid : int) : Unix.inet_addr option =
   Mutex.lock seen_mutex ;
   let r = Hashtbl.find_opt seen_table uuid in
   Mutex.unlock seen_mutex ;
-  match r with None -> None | Some fd_opt -> fd_opt
+  match r with
+  | None ->
+      (* uuid not in table at all - shouldn't happen *)
+      None
+  | Some addr_opt ->
+      addr_opt
 
 (* Remove state for a finished search *)
 let forget (uuid : int) : unit =
@@ -112,59 +121,69 @@ let cleanup_results (uuid : int) : unit =
   Hashtbl.remove results_table uuid ;
   Mutex.unlock results_mutex
 
-(* Send search messages to all nodes within hop_count distance *)
-(* Part 2 Step 1*)
+(* Open a fresh connection, send a single message, then close *)
+let send_to_addr (addr : Unix.inet_addr) (msg : message) : unit =
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  repeat_try_connect sock (Unix.ADDR_INET (addr, port)) ;
+  send_message sock msg ;
+  Unix.close sock
+
+(* Send search messages to all adjacent neighbours, skipping skip_addr *)
+(* Part 2 Step 1 *)
 let flood_search (uuid : int) (fn : path) (hop_count : int) (own_id : int)
     (adj : int array array) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
-    (skip_fd : Unix.file_descr option) : unit =
+    (skip_addr : Unix.inet_addr option) : unit =
   if hop_count <= 0 then
     ()
   else
     List.iter
-      (fun (addr, fd) ->
+      (fun (addr, _fd) ->
         let peer_id = id_of_dc_utd_ip addr in
-        (* Only forward to neighbours that are adjacent in adj *)
         let is_neighbour =
           peer_id >= 1
           && peer_id <= Array.length adj
           && adj.(own_id - 1).(peer_id - 1) = 1
         in
-        let is_skip = match skip_fd with Some s -> s = fd | None -> false in
+        let is_skip =
+          match skip_addr with Some a -> a = addr | None -> false
+        in
         if is_neighbour && not is_skip then
-          send_message fd (Search (uuid, fn, hop_count - 1)) )
+          send_to_addr addr (Search (uuid, fn, hop_count - 1)) )
       peer_fds
 
-(* Handle incoming search message from the server thread *)
-let handle_search_message (msg : message) (from_fd : Unix.file_descr)
+(* Handle incoming Search or SearchResult - called from server thread *)
+let handle_search_message (msg : message) (from_addr : Unix.inet_addr)
     (self_files : path list) (own_hostname : string) (own_id : int)
     (adj : int array array) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
     : unit =
   match msg with
   | Search (uuid, fn, hop_count) ->
-      (* Part 2 Step 2 *)
-      if record_seen uuid (Some from_fd) then
-        (* First time we see this search request *)
+      (* Part 2 Step 2 - suppress duplicates *)
+      if record_seen uuid (Some from_addr) then
         let have_file = List.mem fn self_files in
-        if have_file then
-          (* Part 2 Step 3 *)
-          (* Reply directly back up-stream *)
-          send_message from_fd (SearchResult (uuid, fn, own_hostname))
-        else if hop_count > 0 then
-          (* Forward with decremented hop-count *)
-          flood_search uuid fn hop_count own_id adj peer_fds (Some from_fd)
+        if have_file then (
+          (* Part 2 Step 3 - reply upstream via fresh connection *)
+          _log Log_Info "Found '%s', sending SearchResult to %s" fn
+            (Unix.string_of_inet_addr from_addr) ;
+          send_to_addr from_addr (SearchResult (uuid, fn, own_hostname))
+        ) else if hop_count > 0 then
+          (* Forward with decremented hop-count, skipping sender *)
+          flood_search uuid fn hop_count own_id adj peer_fds (Some from_addr)
       (* else: hop-count exhausted, drop silently *)
 
       (* Duplicate - drop *)
   | SearchResult (uuid, fn, host) -> (
     match upstream_of uuid with
     | None ->
-        (* Part 2 Step 4 *)
-        (* We are the initiator - store the result *)
+        (* Part 2 Step 4 - we are the initiator, store the result *)
+        _log Log_Info "SearchResult for '%s' reached initiator (from %s)" fn
+          host ;
         add_result uuid fn host
-    | Some upstream_fd ->
-        (* Part 2 Step 5 *)
-        (* Forward the reply back toward the initiator *)
-        send_message upstream_fd (SearchResult (uuid, fn, host)) )
+    | Some upstream_addr ->
+        (* Part 2 Step 5 - forward upstream via fresh connection *)
+        _log Log_Info "Forwarding SearchResult for '%s' upstream to %s" fn
+          (Unix.string_of_inet_addr upstream_addr) ;
+        send_to_addr upstream_addr (SearchResult (uuid, fn, host)) )
   | _ ->
       ()
 
@@ -178,10 +197,7 @@ let search (fn : path) (own_id : int) (adj : int array array)
   let hop_count = ref 1 in
   let result = ref [] in
   while !result = [] && !hop_count <= 16 do
-    (* Create unique identifier for this specific search so that other nodes
-       don't drop it *)
     let uuid = Random.int 0x3FFFFFFF in
-    (* Register as initiator (no upstream fd) *)
     ignore (record_seen uuid None) ;
     init_results uuid ;
     let timeout = timer_of_hop_count !hop_count in
@@ -189,41 +205,10 @@ let search (fn : path) (own_id : int) (adj : int array array)
       !hop_count timeout ;
     let start = Unix.gettimeofday () in
     flood_search uuid fn !hop_count own_id adj peer_fds None ;
-    (* Part 2 Step 6 *)
-    (* Collect replies until timer expires *)
+    (* Part 2 Step 6 - wait for server threads to populate results_table *)
     let deadline = start +. timeout in
-    let done_ = ref false in
-    while not !done_ do
-      let remaining = deadline -. Unix.gettimeofday () in
-      if remaining <= 0.0 then
-        done_ := true
-      else
-        (* Poll all peer sockets for incoming SearchResult messages *)
-        let fds = List.map snd peer_fds in
-        let ready, _, _ = Unix.select fds [] [] (min remaining 0.5) in
-        List.iter
-          (fun fd ->
-            let buf = Bytes.create bufsize in
-            let n = Unix.recv fd buf 0 bufsize [] in
-            if n > 0 then
-              match message_of_bytes buf with
-              | Some (SearchResult (rid, rfn, rhost)) when rid = uuid ->
-                  let elapsed = Unix.gettimeofday () -. start in
-                  _log Log_Info "Reply in %.3fs: '%s' @ %s" elapsed rfn rhost ;
-                  add_result uuid rfn rhost
-              | Some other ->
-                  _log Log_Error
-                    "Unexpected message during search: ignored (%s)"
-                    ( match other with
-                    | Search _ ->
-                        "Search"
-                    | SearchResult _ ->
-                        "SearchResult (wrong uuid)"
-                    | _ ->
-                        "other" )
-              | None ->
-                  _log Log_Error "Failed to parse message during search" )
-          ready
+    while Unix.gettimeofday () < deadline do
+      Thread.delay 0.1
     done ;
     result := get_results uuid ;
     cleanup_results uuid ;
@@ -245,7 +230,7 @@ let download_file (fn : path) (remote_addr : Unix.inet_addr) (local_root : path)
   let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   repeat_try_connect sock (Unix.ADDR_INET (remote_addr, port)) ;
   send_message sock (Download fn) ;
-  (* Chunked download for large files *)
+  (* Chunked read for large files *)
   let chunks = Buffer.create 4096 in
   let tmp = Bytes.create bufsize in
   let keep = ref true in

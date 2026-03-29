@@ -8,8 +8,19 @@ open Logging
 (* Server thread - loop forever and wait for connections from other nodes *)
 let rec server (server_sock : Unix.file_descr) (self : node)
     (adj : int array array)
-    (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref) () : unit =
-  let client_sock, _ = Unix.accept server_sock in
+    (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
+    (peer_fds_mutex : Mutex.t) () : unit =
+  let client_sock, client_addr = Unix.accept server_sock in
+  let addr =
+    match client_addr with
+    | Unix.ADDR_INET (a, _) ->
+        a
+    | _ ->
+        fatal rc_Error "Unexpected socket address"
+  in
+  Mutex.lock peer_fds_mutex ;
+  peer_fds := (addr, client_sock) :: !peer_fds ;
+  Mutex.unlock peer_fds_mutex ;
   ignore
     (Thread.create
        (fun () ->
@@ -17,24 +28,21 @@ let rec server (server_sock : Unix.file_descr) (self : node)
          while !keep do
            match recv_message client_sock with
            | Some MachineInfo, _ ->
-              _log Log_Info "Received MachineInfo request";
+               _log Log_Info "Received MachineInfo request" ;
                let msg = Bytes.of_string (string_of_node self) in
                ignore (Unix.send client_sock msg 0 (Bytes.length msg) [])
            | Some (Search (uuid, fn, hops)), _ ->
-              _log Log_Info "Received Searh request (%d, %s, %d)" uuid fn hops;
+               _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
                handle_search_message
                  (Search (uuid, fn, hops))
-                 client_sock self.files self.machine.hostname self.uuid adj
-                 !peer_fds
+                 addr self.files self.machine.hostname self.uuid adj !peer_fds
            | Some (SearchResult (uuid, fn, host)), _ ->
-              _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host;
+               _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host ;
                handle_search_message
                  (SearchResult (uuid, fn, host))
-                 client_sock self.files self.machine.hostname self.uuid adj
-                 !peer_fds
+                 addr self.files self.machine.hostname self.uuid adj !peer_fds
            | Some (Download fn), _ -> (
-              _log Log_Info "Received Download request (%s)" fn;
-               (* Serve file if we have it *)
+               _log Log_Info "Received Download request (%s)" fn ;
                let basename = Filename.basename fn in
                match
                  List.find_opt
@@ -65,4 +73,4 @@ let rec server (server_sock : Unix.file_descr) (self : node)
          done ;
          Unix.close client_sock )
        () ) ;
-  server server_sock self adj peer_fds ()
+  server server_sock self adj peer_fds peer_fds_mutex ()

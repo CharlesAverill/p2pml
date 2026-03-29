@@ -45,6 +45,7 @@ let () =
   in
   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
   let peer_fds : (Unix.inet_addr * Unix.file_descr) list ref = ref [] in
+  let peer_fds_mutex = Mutex.create () in
   (* Start listening server *)
   let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.setsockopt server_sock Unix.SO_REUSEADDR true ;
@@ -52,10 +53,10 @@ let () =
     (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
   Unix.listen server_sock 64 ;
   let _server_thread =
-    Thread.create (server server_sock self adj peer_fds) ()
+    Thread.create (server server_sock self adj peer_fds peer_fds_mutex) ()
   in
   (* Connect to neighbours concurrently *)
-  let mutex = Mutex.create () in
+  let outbound_fds = ref [] in
   let threads =
     List.map
       (fun addr ->
@@ -63,14 +64,14 @@ let () =
           (fun () ->
             let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
             repeat_try_connect sock (Unix.ADDR_INET (addr, port)) ;
-            Mutex.lock mutex ;
+            Mutex.lock peer_fds_mutex ;
             peer_fds := (addr, sock) :: !peer_fds ;
-            Mutex.unlock mutex )
+            outbound_fds := (addr, sock) :: !outbound_fds ;
+            Mutex.unlock peer_fds_mutex )
           () )
       neighbour_addrs
   in
   List.iter Thread.join threads ;
-  (* Print connection information *)
   print_endline "===Connection Information===" ;
   List.iter
     (fun (_, sock) ->
@@ -78,7 +79,7 @@ let () =
       let buf = Bytes.create bufsize in
       ignore (Unix.recv sock buf 0 bufsize []) ;
       print_endline (String.of_bytes buf) )
-    !peer_fds ;
+    !outbound_fds ;
   (* Part 2 - interactive search + download loop *)
   while true do
     Printf.printf "\n>> Request file: %!" ;
