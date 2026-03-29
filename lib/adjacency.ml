@@ -34,14 +34,14 @@ let connected (adj : int array array) : bool =
   else
     let cur = ref 0 in
     let found = ref (union empty (singleton !cur)) in
-    let queue = ref (Queue.of_seq (List.to_seq [!cur])) in
+    let queue = Queue.of_seq (List.to_seq [!cur]) in
     (* BFS *)
-    while not (Queue.is_empty !queue) do
-      cur := Queue.pop !queue ;
+    while not (Queue.is_empty queue) do
+      cur := Queue.pop queue ;
       for i = 0 to Array.length adj - 1 do
         if adj.(!cur).(i) = 1 && not (exists (( = ) i) !found) then (
           found := union !found (singleton i) ;
-          Queue.add i !queue
+          Queue.add i queue
         )
       done
     done ;
