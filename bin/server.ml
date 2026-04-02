@@ -4,10 +4,10 @@ open Node
 open Messages
 open Search
 open Logging
+open Adjacency
 
 (* Server thread - loop forever and wait for connections from other nodes *)
-let rec server (server_sock : Unix.file_descr) (self : node)
-    (adj : int array array)
+let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat)
     (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
     (peer_fds_mutex : Mutex.t) () : unit =
   let client_sock, client_addr = Unix.accept server_sock in

@@ -1,12 +1,17 @@
+(** Handling adjacency matrices *)
+
 open Logging
 open Common
 
-(* Integer sets *)
+(** Integer sets *)
 module IntSet = Set.Make (Int)
+
 open IntSet
 
-(* Parse adjacency matrix from file *)
-let read_adj (p : path) : int array array option =
+type adj_mat = int array array
+
+(** Parse adjacency matrix from a text file located at [p] *)
+let read_adj (p : path) : adj_mat option =
   let arr =
     Array.of_list
       (List.map
@@ -26,9 +31,8 @@ let read_adj (p : path) : int array array option =
   else
     None
 
-(* Check if an adjacency matrix represents a connected network by performing a
-  breadth-first search *)
-let connected (adj : int array array) : bool =
+(** Determine if an adjacency matrix represents a connected network via BFS *)
+let connected (adj : adj_mat) : bool =
   if Array.length adj < 1 then
     fatal rc_Error "Invalid adjacency matrix: length must be positive"
   else

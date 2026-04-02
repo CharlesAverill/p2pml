@@ -1,22 +1,24 @@
+(** Inter-machine message enoding, decoding, and transfer *)
+
 open Common
 open Logging
 
-(* Messages sent between machines *)
+(** Messages sent between machines *)
 type message =
-  | MachineInfo
   (* Request for receiver machine information *)
-  | Search of int * path * int
+  | MachineInfo
   (* Search for file - uuid * filepath * hop_count *)
-  | SearchResult of int * path * string
+  | Search of int * path * int
   (* File found - uuid * filepath * hostname_of_owner *)
-  | Download of path
+  | SearchResult of int * path * string
   (* Request to download a file by name *)
-  | DownloadData of path * bytes
+  | Download of path
   (* File transfer - filename * raw contents *)
+  | DownloadData of path * bytes
+  (* Error occurred *)
   | ErrMsg of string
 
-(* Error occurred *)
-
+(** Serialize a message into a byte sequence *)
 let bytes_of_message (m : message) : bytes =
   String.to_bytes
     ( match m with
@@ -34,6 +36,7 @@ let bytes_of_message (m : message) : bytes =
     | ErrMsg s ->
         Printf.sprintf "ERR:%s" s )
 
+(** Deserialize a byte sequence into a message *)
 let message_of_bytes (b : bytes) : message option =
   let open Str in
   let s =
@@ -100,6 +103,7 @@ let message_of_bytes (b : bytes) : message option =
   | _ ->
       None
 
+(** Send a message [msg] to socket [fd] *)
 let send_message (fd : Unix.file_descr) (msg : message) : unit =
   _log Log_Debug "Sending message: %s" (String.of_bytes (bytes_of_message msg)) ;
   ignore
@@ -107,6 +111,9 @@ let send_message (fd : Unix.file_descr) (msg : message) : unit =
        (Bytes.length (bytes_of_message msg))
        [] )
 
+(** Receive a message from a socket [fd] via a blocking wait
+
+    Returns a potentially-decoded message and the received byte sequence *)
 let recv_message (fd : Unix.file_descr) : message option * bytes =
   let buf = Bytes.create bufsize in
   ignore (Unix.recv fd buf 0 bufsize []) ;

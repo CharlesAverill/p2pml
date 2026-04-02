@@ -1,9 +1,15 @@
+(** Search for files within the network *)
+
 open Common
 open Messages
 open Logging
+open Adjacency
 
-(* Dijkstra's algorithm: get distance function between i and other nodes *)
-let dijkstra (i : int) (adj : int array array) : int -> int =
+(** Dijkstra's algorithm
+
+    For a given adjacency matrix [adj], compute a function that determines the
+    distance of any node [j] from the given node [i] *)
+let dijkstra (i : int) (adj : adj_mat) : int -> int =
   let n = Array.length adj in
   let dist = ref (fun _ -> Int.max_int) in
   let queue = ref (Seq.init n (fun i -> i)) in
@@ -39,6 +45,7 @@ let dijkstra (i : int) (adj : int array array) : int -> int =
   done ;
   !dist
 
+(** Find the distance between [i] and [j] in the network described by [adj] *)
 let distance i j adj = dijkstra i adj j
 
 let nodes_at_dist i adj dist_val : int list =
@@ -51,14 +58,16 @@ let nodes_at_dist i adj dist_val : int list =
         None )
     (List.init (Array.length adj) (fun j -> j))
 
-(* Maps search UUID -> address of node we received it from.
-   None means we are the initiator. *)
+(** Maps search UUID -> address of node we received it from
+
+   None means we are the initiator *)
 let seen_table : (int, Unix.inet_addr option) Hashtbl.t = Hashtbl.create 64
 
 let seen_mutex : Mutex.t = Mutex.create ()
 
-(* Record that we have seen uuid coming from from_addr.
-   Returns true if this is the first time we've seen this uuid. *)
+(** Record that we have seen [uuid] coming from [from_addr]
+
+    Returns whether this is the first time [uuid] was seen *)
 let record_seen (uuid : int) (from_addr : Unix.inet_addr option) : bool =
   Mutex.lock seen_mutex ;
   let fresh = not (Hashtbl.mem seen_table uuid) in
@@ -66,8 +75,9 @@ let record_seen (uuid : int) (from_addr : Unix.inet_addr option) : bool =
   Mutex.unlock seen_mutex ;
   fresh
 
-(* Get the address to forward a SearchResult back toward the initiator.
-   Returns None if we are the initiator. *)
+(** Get the address to forward a SearchResult back toward the initiator
+
+   Returns [None] if we are the initiator *)
 let upstream_of (uuid : int) : Unix.inet_addr option =
   Mutex.lock seen_mutex ;
   let r = Hashtbl.find_opt seen_table uuid in
@@ -79,23 +89,25 @@ let upstream_of (uuid : int) : Unix.inet_addr option =
   | Some addr_opt ->
       addr_opt
 
-(* Remove state for a finished search *)
+(** Remove state for a completed search *)
 let forget (uuid : int) : unit =
   Mutex.lock seen_mutex ;
   Hashtbl.remove seen_table uuid ;
   Mutex.unlock seen_mutex
 
-(* Search results table *)
+(** Search results table *)
 let results_table : (int, (path * string) list ref) Hashtbl.t =
   Hashtbl.create 16
 
 let results_mutex : Mutex.t = Mutex.create ()
 
+(** Initialize search results table with [uuid] as the initializer's ID *)
 let init_results (uuid : int) : unit =
   Mutex.lock results_mutex ;
   Hashtbl.replace results_table uuid (ref []) ;
   Mutex.unlock results_mutex
 
+(** Add result [fn] @ [host]([uuid]) to the result table *)
 let add_result (uuid : int) (fn : path) (host : string) : unit =
   Mutex.lock results_mutex ;
   ( match Hashtbl.find_opt results_table uuid with
@@ -105,6 +117,7 @@ let add_result (uuid : int) (fn : path) (host : string) : unit =
       () ) ;
   Mutex.unlock results_mutex
 
+(** Get the search results that have returned to the initiator described by [uuid] *)
 let get_results (uuid : int) : (path * string) list =
   Mutex.lock results_mutex ;
   let r =
@@ -116,22 +129,25 @@ let get_results (uuid : int) : (path * string) list =
   in
   Mutex.unlock results_mutex ; r
 
+(** Clear the search results after a completed search *)
 let cleanup_results (uuid : int) : unit =
   Mutex.lock results_mutex ;
   Hashtbl.remove results_table uuid ;
   Mutex.unlock results_mutex
 
-(* Open a fresh connection, send a single message, then close *)
+(** Open a fresh connection to [addr] and send a message [msg] *)
 let send_to_addr (addr : Unix.inet_addr) (msg : message) : unit =
   let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   repeat_try_connect sock (Unix.ADDR_INET (addr, port)) ;
   send_message sock msg ;
   Unix.close sock
 
-(* Send search messages to all adjacent neighbours, skipping skip_addr *)
 (* Part 2 Step 1 *)
+
+(** Send search messages throughout the network [adj] for [fn] within [hop_count]
+    distance, skipping [skip_addr] (own address) *)
 let flood_search (uuid : int) (fn : path) (hop_count : int) (own_id : int)
-    (adj : int array array) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
+    (adj : adj_mat) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
     (skip_addr : Unix.inet_addr option) : unit =
   if hop_count <= 0 then
     ()
@@ -151,11 +167,11 @@ let flood_search (uuid : int) (fn : path) (hop_count : int) (own_id : int)
           send_to_addr addr (Search (uuid, fn, hop_count - 1)) )
       peer_fds
 
-(* Handle incoming Search or SearchResult - called from server thread *)
+(** Handle incoming Search or SearchResult [msg] - called from server thread *)
 let handle_search_message (msg : message) (from_addr : Unix.inet_addr)
     (self_files : path list) (own_hostname : string) (own_id : int)
-    (adj : int array array) (peer_fds : (Unix.inet_addr * Unix.file_descr) list)
-    : unit =
+    (adj : adj_mat) (peer_fds : (Unix.inet_addr * Unix.file_descr) list) : unit
+    =
   match msg with
   | Search (uuid, fn, hop_count) ->
       (* Part 2 Step 2 - suppress duplicates *)
@@ -187,11 +203,11 @@ let handle_search_message (msg : message) (from_addr : Unix.inet_addr)
   | _ ->
       ()
 
-(* t_{hop_count} *)
+(** [t_{hop_count}] *)
 let timer_of_hop_count = float
 
-(* Search for file in network *)
-let search (fn : path) (own_id : int) (adj : int array array)
+(** Search for file [fn] in network [adj] via connections [peer_fds] *)
+let search (fn : path) (own_id : int) (adj : adj_mat)
     (peer_fds : (Unix.inet_addr * Unix.file_descr) list) : (path * string) list
     =
   let hop_count = ref 1 in
@@ -224,7 +240,7 @@ let search (fn : path) (own_id : int) (adj : int array array)
     _log Log_Info "File '%s' not found in network (hop-count exceeded 16)." fn ;
   !result
 
-(* Download file from remote host *)
+(** Download file [fn] from remote host @ [remote_addr] to own file store [local_root] *)
 let download_file (fn : path) (remote_addr : Unix.inet_addr) (local_root : path)
     : path option =
   let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in

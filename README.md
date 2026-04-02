@@ -84,7 +84,7 @@ stale search state is not retained.
 
 ## Building
 
-Clone to CS servers `dcXX.utdallas.edu` - these have OCaml and Dune built-in
+Clone to CS servers `dcXX.utdallas.edu` - these have OCaml and Dune pre-installed.
 
 ```
 git clone https://github.com/CharlesAVerill/p2pml && cd p2pml
@@ -107,7 +107,7 @@ dune exec -- p2pml ./example_adj.txt
 111
 ```
 
-So dc01 <-> dc02, dc02 <-> dc0{1,3}.
+So dc01 <-> dc02, dc02 <-> dc03, dc03 -> dc01.
 
 ## Part I Log
 
