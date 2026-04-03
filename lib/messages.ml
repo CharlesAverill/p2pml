@@ -15,6 +15,8 @@ type message =
   | Download of path
   (* File transfer - filename * raw contents *)
   | DownloadData of path * bytes
+  (* Update global adjacency matrix - machine index * connections *)
+  | UpdateAdj of int * bool list
   (* Error occurred *)
   | ErrMsg of string
 
@@ -33,6 +35,16 @@ let bytes_of_message (m : message) : bytes =
     | DownloadData (path, data) ->
         let plen = String.length path in
         Printf.sprintf "DOWNLOADDATA:%d:%s%s" plen path (Bytes.to_string data)
+    | UpdateAdj (id, conns) ->
+        Printf.sprintf "UPDATEADJ:%d:%s" id
+          (String.concat ""
+             (List.map
+                (fun b ->
+                  if b then
+                    "1"
+                  else
+                    "0" )
+                conns ) )
     | ErrMsg s ->
         Printf.sprintf "ERR:%s" s )
 
@@ -95,6 +107,27 @@ let message_of_bytes (b : bytes) : message option =
           Bytes.of_string (String.sub rest plen (String.length rest - plen))
         in
         Some (DownloadData (path, data))
+  | s' when String.starts_with ~prefix:"UPDATEADJ:" s' ->
+      (* UPDATEADJ:<id>:<conns> *)
+      if
+        not
+          (string_match (regexp "DOWNLOADDATA:\\([0-9]+\\):\\([0-1]+\\)") s' 0)
+      then
+        None
+      else
+        let id = int_of_string (matched_group 1 s') in
+        let rest = matched_group 2 s' in
+        let conns =
+          List.of_seq
+            (Seq.map
+               (fun c ->
+                 if c = '1' then
+                   true
+                 else
+                   false )
+               (String.to_seq rest) )
+        in
+        Some (UpdateAdj (id, conns))
   | s' when String.starts_with ~prefix:"ERR:" s' ->
       if not (string_match (regexp "ERR:\\(.*\\)") s' 0) then
         None

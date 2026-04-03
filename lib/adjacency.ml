@@ -50,3 +50,11 @@ let connected (adj : adj_mat) : bool =
       done
     done ;
     IntSet.cardinal !found = Array.length adj
+
+(** Pad an n*n adjacency matrix to k*k, where k > n
+    
+    New rows and columns are zero-initialized *)
+let pad_adj (adj : adj_mat) (k : int) : adj_mat =
+  let new_adj : adj_mat = Array.make_matrix k k 0 in
+  Array.blit adj 0 new_adj 0 (Array.length adj) ;
+  new_adj

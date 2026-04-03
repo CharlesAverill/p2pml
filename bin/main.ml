@@ -25,23 +25,20 @@ let () =
   in
   (* Part 1 Step 4 *)
   let self = construct_node (Array.length adj) in
-  (* Determine which node IDs we should connect to (1-indexed) *)
-  let neighbour_ids =
-    snd
-      (Array.fold_left
-         (fun (idx, l) conn ->
-           ( idx + 1
-           , if idx + 1 = self.uuid || conn <> 1 then
-               l
-             else
-               (idx + 1) :: l ) )
-         (0, [])
-         adj.(self.uuid - 1) )
-  in
+  (* Determine which neighbors we should connect to (1-indexed) *)
   let neighbour_addrs =
     List.map
       (fun id -> Unix.inet_addr_of_string (dc_utd_ip_of_id id))
-      neighbour_ids
+      (snd
+         (Array.fold_left
+            (fun (idx, l) conn ->
+              ( idx + 1
+              , if idx + 1 = self.uuid || conn <> 1 then
+                  l
+                else
+                  (idx + 1) :: l ) )
+            (0, [])
+            adj.(self.uuid - 1) ) )
   in
   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
   let peer_fds : (Unix.inet_addr * Unix.file_descr) list ref = ref [] in
@@ -52,6 +49,7 @@ let () =
   Unix.bind server_sock
     (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
   Unix.listen server_sock 64 ;
+  let adj = ref adj in
   let _server_thread =
     Thread.create (server server_sock self adj peer_fds peer_fds_mutex) ()
   in
@@ -88,7 +86,7 @@ let () =
     | Some _ ->
         _log Log_Info "File '%s' is available locally\n%!" fn
     | None ->
-        let search_results = search fn self.uuid adj !peer_fds in
+        let search_results = search fn self.uuid !adj !peer_fds in
         if search_results = [] then
           _log Log_Error "File '%s' not found in network\n%!" fn
         else (
