@@ -130,9 +130,11 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
              ->
                ()
            | _, buf ->
+              if Bytes.get buf 0 <> Char.chr 0 then
                _log Log_Error "Server received unexpected message: %s"
                  (String.sub (Bytes.to_string buf) 0
-                    (min 64 (Bytes.length buf)) )
+                    (min 64 (Bytes.length buf)) );
+              keep := false
          done ;
          Unix.close client_sock )
        () ) ;

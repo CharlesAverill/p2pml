@@ -1,0 +1,397 @@
+diff --git a/bin/main.ml b/bin/main.ml
+index 71522b0..ef4c9bc 100644
+--- a/bin/main.ml
++++ b/bin/main.ml
+@@ -25,23 +25,20 @@ let () =
+   in
+   (* Part 1 Step 4 *)
+   let self = construct_node (Array.length adj) in
+-  (* Determine which node IDs we should connect to (1-indexed) *)
+-  let neighbour_ids =
+-    snd
+-      (Array.fold_left
+-         (fun (idx, l) conn ->
+-           ( idx + 1
+-           , if idx + 1 = self.uuid || conn <> 1 then
+-               l
+-             else
+-               (idx + 1) :: l ) )
+-         (0, [])
+-         adj.(self.uuid - 1) )
+-  in
++  (* Determine which neighbors we should connect to (1-indexed) *)
+   let neighbour_addrs =
+     List.map
+       (fun id -> Unix.inet_addr_of_string (dc_utd_ip_of_id id))
+-      neighbour_ids
++      (snd
++         (Array.fold_left
++            (fun (idx, l) conn ->
++              ( idx + 1
++              , if idx + 1 = self.uuid || conn <> 1 then
++                  l
++                else
++                  (idx + 1) :: l ) )
++            (0, [])
++            adj.(self.uuid - 1) ) )
+   in
+   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
+   let peer_fds : (Unix.inet_addr * Unix.file_descr) list ref = ref [] in
+@@ -52,6 +49,7 @@ let () =
+   Unix.bind server_sock
+     (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
+   Unix.listen server_sock 64 ;
++  let adj = ref adj in
+   let _server_thread =
+     Thread.create (server server_sock self adj peer_fds peer_fds_mutex) ()
+   in
+@@ -81,42 +79,47 @@ let () =
+       print_endline (String.of_bytes buf) )
+     !outbound_fds ;
+   (* Part 2 - interactive search + download loop *)
+-  while true do
++  while not !kill_server_thread do
+     Printf.printf "\n>> Request file: %!" ;
+     let fn = read_line () in
+-    match local_search self fn with
+-    | Some _ ->
+-        _log Log_Info "File '%s' is available locally\n%!" fn
+-    | None ->
+-        let search_results = search fn self.uuid adj !peer_fds in
+-        if search_results = [] then
+-          _log Log_Error "File '%s' not found in network\n%!" fn
+-        else (
+-          (* Part 2 Step 7 *)
+-          Printf.printf "\nSearch results:\n" ;
+-          List.iteri
+-            (fun i (found_fn, node_name) ->
+-              Printf.printf "  %d) %s @ %s\n" i found_fn node_name )
+-            search_results ;
+-          let n_results = List.length search_results in
+-          let selection = ref (-1) in
+-          while !selection < 0 || !selection >= n_results do
+-            Printf.printf "\n>> Select index to download from (0-%d): %!"
+-              (n_results - 1) ;
+-            try selection := read_int () with Failure _ -> ()
+-          done ;
+-          let chosen_fn, chosen_host = List.nth search_results !selection in
+-          (* Part 2 Step 8 *)
+-          _log Log_Debug "Downloading '%s' from %sn%!" chosen_fn chosen_host ;
+-          let remote_addr =
+-            (Unix.gethostbyname chosen_host).Unix.h_addr_list.(0)
+-          in
+-          match download_file chosen_fn remote_addr self.root with
+-          | None ->
+-              _log Log_Error "Download failed.\n%!"
+-          | Some local_path ->
+-              self.files <- local_path :: self.files ;
+-              _log Log_Info "Saved to '%s'. File added to share list.\n%!"
+-                local_path
+-        )
++    if String.trim fn = "!exit" then (
++      kill_server_thread := true ;
++      (* Send blank message to initiate server thread death *)
++      send_message server_sock (ErrMsg "")
++    ) else
++      match local_search self fn with
++      | Some _ ->
++          _log Log_Info "File '%s' is available locally\n%!" fn
++      | None ->
++          let search_results = search fn self.uuid !adj !peer_fds in
++          if search_results = [] then
++            _log Log_Error "File '%s' not found in network\n%!" fn
++          else (
++            (* Part 2 Step 7 *)
++            Printf.printf "\nSearch results:\n" ;
++            List.iteri
++              (fun i (found_fn, node_name) ->
++                Printf.printf "  %d) %s @ %s\n" i found_fn node_name )
++              search_results ;
++            let n_results = List.length search_results in
++            let selection = ref (-1) in
++            while !selection < 0 || !selection >= n_results do
++              Printf.printf "\n>> Select index to download from (0-%d): %!"
++                (n_results - 1) ;
++              try selection := read_int () with Failure _ -> ()
++            done ;
++            let chosen_fn, chosen_host = List.nth search_results !selection in
++            (* Part 2 Step 8 *)
++            _log Log_Debug "Downloading '%s' from %sn%!" chosen_fn chosen_host ;
++            let remote_addr =
++              (Unix.gethostbyname chosen_host).Unix.h_addr_list.(0)
++            in
++            match download_file chosen_fn remote_addr self.root with
++            | None ->
++                _log Log_Error "Download failed.\n%!"
++            | Some local_path ->
++                self.files <- local_path :: self.files ;
++                _log Log_Info "Saved to '%s'. File added to share list.\n%!"
++                  local_path
++          )
+   done
+diff --git a/bin/server.ml b/bin/server.ml
+index 6252cb3..4bed44b 100644
+--- a/bin/server.ml
++++ b/bin/server.ml
+@@ -6,8 +6,105 @@ open Search
+ open Logging
+ open Adjacency
+ 
+-(* Server thread - loop forever and wait for connections from other nodes *)
+-let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat)
++(** Denotes if the server thread should be killed, e.g., upon leaving the network *)
++let kill_server_thread = ref false
++
++let kill_mutex = Mutex.create ()
++
++(** Handle individual messages received from a client
++
++    Returns false if an unexpected message was received *)
++let handle_msg (self : node) (adj : adj_mat ref)
++    (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
++    (addr : Unix.inet_addr) (client_sock : Unix.file_descr) (keep : bool ref) =
++  function
++  | MachineInfo ->
++      _log Log_Info "Received MachineInfo request" ;
++      let msg = Bytes.of_string (string_of_node self) in
++      ignore (Unix.send client_sock msg 0 (Bytes.length msg) []) ;
++      true
++  | Search (uuid, fn, hops)
++    when Mutex.lock kill_mutex ;
++         let b = not !kill_server_thread in
++         Mutex.unlock kill_mutex ; b ->
++      _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
++      handle_search_message
++        (Search (uuid, fn, hops))
++        addr self.files self.machine.hostname self.uuid !adj !peer_fds ;
++      true
++  | Search _ ->
++      _log Log_Info "Received Search request while dying" ;
++      send_message client_sock
++        (ErrMsg (Printf.sprintf "I (%s) am dying" (hostname_of_id self.uuid))) ;
++      true
++  | SearchResult (uuid, fn, host) ->
++      _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host ;
++      handle_search_message
++        (SearchResult (uuid, fn, host))
++        addr self.files self.machine.hostname self.uuid !adj !peer_fds ;
++      true
++  | Download fn ->
++      ( _log Log_Info "Received Download request (%s)" fn ;
++        let basename = Filename.basename fn in
++        match
++          List.find_opt (fun f -> Filename.basename f = basename) self.files
++        with
++        | None ->
++            send_message client_sock
++              (ErrMsg (Printf.sprintf "File not found: %s" fn)) ;
++            keep := false
++        | Some local_path -> (
++          try
++            let ic = open_in_bin local_path in
++            let size = in_channel_length ic in
++            let data = Bytes.create size in
++            really_input ic data 0 size ;
++            close_in ic ;
++            send_message client_sock (DownloadData (fn, data)) ;
++            keep := false
++          with Sys_error e ->
++            send_message client_sock (ErrMsg e) ;
++            keep := false ) ) ;
++      true
++  | AugmentAdj (id, conns) ->
++      _log Log_Info "Node %d is joining the network" id ;
++      if id < Array.length !adj then
++        send_message client_sock
++          (ErrMsg
++             (Printf.sprintf
++                "Invalid machine index for joining. Expected id >= %d but got \
++                 %d"
++                (Array.length !adj) id ) )
++      else (
++        adj := pad_adj !adj (id + 1) ;
++        List.iteri (fun i b -> if b then !adj.(id).(i) <- 1) conns
++      ) ;
++      true
++  | LeaveNetwork id ->
++      _log Log_Info "Node %d is leaving the network" id ;
++      if id >= Array.length !adj then
++        send_message client_sock
++          (ErrMsg
++             (Printf.sprintf
++                "Invalid machine index for leaving. Expected id < %d but got %d"
++                (Array.length !adj) id ) )
++      else (
++        (* Clear <id>'s connection row *)
++        !adj.(id) <- Array.make (Array.length !adj) 0 ;
++        (* Clear <id>'s connection column *)
++        for i = 0 to id do
++          !adj.(i).(id) <- 0
++        done ;
++        (* Remove <id>'s entry in peer_fds *)
++        peer_fds :=
++          List.filter (fun (addr, _) -> id_of_dc_utd_ip addr <> id) !peer_fds
++      ) ;
++      true
++  | DownloadData _ | ErrMsg _ ->
++      false
++
++(** Server thread - loop forever and wait for connections from other nodes *)
++let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
+     (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
+     (peer_fds_mutex : Mutex.t) () : unit =
+   let client_sock, client_addr = Unix.accept server_sock in
+@@ -19,7 +116,8 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat)
+         fatal rc_Error "Unexpected socket address"
+   in
+   Mutex.lock peer_fds_mutex ;
+-  peer_fds := (addr, client_sock) :: !peer_fds ;
++  if not (List.mem (addr, client_sock) !peer_fds) then
++    peer_fds := (addr, client_sock) :: !peer_fds ;
+   Mutex.unlock peer_fds_mutex ;
+   ignore
+     (Thread.create
+@@ -27,50 +125,18 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat)
+          let keep = ref true in
+          while !keep do
+            match recv_message client_sock with
+-           | Some MachineInfo, _ ->
+-               _log Log_Info "Received MachineInfo request" ;
+-               let msg = Bytes.of_string (string_of_node self) in
+-               ignore (Unix.send client_sock msg 0 (Bytes.length msg) [])
+-           | Some (Search (uuid, fn, hops)), _ ->
+-               _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
+-               handle_search_message
+-                 (Search (uuid, fn, hops))
+-                 addr self.files self.machine.hostname self.uuid adj !peer_fds
+-           | Some (SearchResult (uuid, fn, host)), _ ->
+-               _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host ;
+-               handle_search_message
+-                 (SearchResult (uuid, fn, host))
+-                 addr self.files self.machine.hostname self.uuid adj !peer_fds
+-           | Some (Download fn), _ -> (
+-               _log Log_Info "Received Download request (%s)" fn ;
+-               let basename = Filename.basename fn in
+-               match
+-                 List.find_opt
+-                   (fun f -> Filename.basename f = basename)
+-                   self.files
+-               with
+-               | None ->
+-                   send_message client_sock
+-                     (ErrMsg (Printf.sprintf "File not found: %s" fn)) ;
+-                   keep := false
+-               | Some local_path -> (
+-                 try
+-                   let ic = open_in_bin local_path in
+-                   let size = in_channel_length ic in
+-                   let data = Bytes.create size in
+-                   really_input ic data 0 size ;
+-                   close_in ic ;
+-                   send_message client_sock (DownloadData (fn, data)) ;
+-                   keep := false
+-                 with Sys_error e ->
+-                   send_message client_sock (ErrMsg e) ;
+-                   keep := false ) )
++           | Some msg, _
++             when handle_msg self adj peer_fds addr client_sock keep msg = true
++             ->
++               ()
+            | _, buf ->
+-               _log Log_Error "Unrecognized message from client: %s"
++               _log Log_Error "Server received unexpected message: %s"
+                  (String.sub (Bytes.to_string buf) 0
+-                    (min 64 (Bytes.length buf)) ) ;
+-               keep := false
++                    (min 64 (Bytes.length buf)) )
+          done ;
+          Unix.close client_sock )
+        () ) ;
+-  server server_sock self adj peer_fds peer_fds_mutex ()
++  if !kill_server_thread then
++    _log Log_Critical "Leaving the network upon user request"
++  else
++    server server_sock self adj peer_fds peer_fds_mutex ()
+diff --git a/lib/adjacency.ml b/lib/adjacency.ml
+index e65d380..4c88f39 100644
+--- a/lib/adjacency.ml
++++ b/lib/adjacency.ml
+@@ -50,3 +50,11 @@ let connected (adj : adj_mat) : bool =
+       done
+     done ;
+     IntSet.cardinal !found = Array.length adj
++
++(** Pad an n*n adjacency matrix to k*k, where k > n
++    
++    New rows and columns are zero-initialized *)
++let pad_adj (adj : adj_mat) (k : int) : adj_mat =
++  let new_adj : adj_mat = Array.make_matrix k k 0 in
++  Array.blit adj 0 new_adj 0 (Array.length adj) ;
++  new_adj
+diff --git a/lib/messages.ml b/lib/messages.ml
+index db7f363..ab7bdd8 100644
+--- a/lib/messages.ml
++++ b/lib/messages.ml
+@@ -15,6 +15,10 @@ type message =
+   | Download of path
+   (* File transfer - filename * raw contents *)
+   | DownloadData of path * bytes
++  (* Augment global adjacency matrix - machine index * connections *)
++  | AugmentAdj of int * bool list
++  (* Notice of departure from the network - machine index *)
++  | LeaveNetwork of int
+   (* Error occurred *)
+   | ErrMsg of string
+ 
+@@ -33,6 +37,18 @@ let bytes_of_message (m : message) : bytes =
+     | DownloadData (path, data) ->
+         let plen = String.length path in
+         Printf.sprintf "DOWNLOADDATA:%d:%s%s" plen path (Bytes.to_string data)
++    | AugmentAdj (id, conns) ->
++        Printf.sprintf "AUGMENTADJ:%d:%s" id
++          (String.concat ""
++             (List.map
++                (fun b ->
++                  if b then
++                    "1"
++                  else
++                    "0" )
++                conns ) )
++    | LeaveNetwork id ->
++        Printf.sprintf "LEAVENET:%d" id
+     | ErrMsg s ->
+         Printf.sprintf "ERR:%s" s )
+ 
+@@ -95,6 +111,32 @@ let message_of_bytes (b : bytes) : message option =
+           Bytes.of_string (String.sub rest plen (String.length rest - plen))
+         in
+         Some (DownloadData (path, data))
++  | s' when String.starts_with ~prefix:"LEAVENET:" s' ->
++      (* LEAVENET:<id> *)
++      if not (string_match (regexp "LEAVENET:\\([0-9]+\\)") s' 0) then
++        None
++      else
++        let id = int_of_string (matched_group 1 s') in
++        Some (LeaveNetwork id)
++  | s' when String.starts_with ~prefix:"AUGMENTADJ:" s' ->
++      (* AUGMENTADJ:<id>:<conns> *)
++      if not (string_match (regexp "AUGMENTADJ:\\([0-9]+\\):\\([0-1]+\\)") s' 0)
++      then
++        None
++      else
++        let id = int_of_string (matched_group 1 s') in
++        let rest = matched_group 2 s' in
++        let conns =
++          List.of_seq
++            (Seq.map
++               (fun c ->
++                 if c = '1' then
++                   true
++                 else
++                   false )
++               (String.to_seq rest) )
++        in
++        Some (AugmentAdj (id, conns))
+   | s' when String.starts_with ~prefix:"ERR:" s' ->
+       if not (string_match (regexp "ERR:\\(.*\\)") s' 0) then
+         None
