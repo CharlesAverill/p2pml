@@ -6,6 +6,11 @@ open Search
 open Logging
 open Adjacency
 
+(** Denotes if the server thread should be killed, e.g., upon leaving the network *)
+let kill_server_thread = ref false
+
+let kill_mutex = Mutex.create ()
+
 (** Handle individual messages received from a client
 
     Returns false if an unexpected message was received *)
@@ -18,11 +23,19 @@ let handle_msg (self : node) (adj : adj_mat ref)
       let msg = Bytes.of_string (string_of_node self) in
       ignore (Unix.send client_sock msg 0 (Bytes.length msg) []) ;
       true
-  | Search (uuid, fn, hops) ->
+  | Search (uuid, fn, hops)
+    when Mutex.lock kill_mutex ;
+         let b = not !kill_server_thread in
+         Mutex.unlock kill_mutex ; b ->
       _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
       handle_search_message
         (Search (uuid, fn, hops))
         addr self.files self.machine.hostname self.uuid !adj !peer_fds ;
+      true
+  | Search _ ->
+      _log Log_Info "Received Search request while dying" ;
+      send_message client_sock
+        (ErrMsg (Printf.sprintf "I (%s) am dying" (hostname_of_id self.uuid))) ;
       true
   | SearchResult (uuid, fn, host) ->
       _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host ;
@@ -90,17 +103,10 @@ let handle_msg (self : node) (adj : adj_mat ref)
   | DownloadData _ | ErrMsg _ ->
       false
 
-(** Denotes if the server thread should be killed, e.g., upon leaving the network *)
-let kill_server_thread = ref false
-
 (** Server thread - loop forever and wait for connections from other nodes *)
 let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
     (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
     (peer_fds_mutex : Mutex.t) () : unit =
-  if !kill_server_thread then (
-    _log Log_Critical "Leaving the network upon user request" ;
-    exit 0
-  ) ;
   let client_sock, client_addr = Unix.accept server_sock in
   let addr =
     match client_addr with
@@ -130,4 +136,7 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
          done ;
          Unix.close client_sock )
        () ) ;
-  server server_sock self adj peer_fds peer_fds_mutex ()
+  if !kill_server_thread then
+    _log Log_Critical "Leaving the network upon user request"
+  else
+    server server_sock self adj peer_fds peer_fds_mutex ()

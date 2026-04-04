@@ -79,12 +79,14 @@ let () =
       print_endline (String.of_bytes buf) )
     !outbound_fds ;
   (* Part 2 - interactive search + download loop *)
-  while true do
+  while not !kill_server_thread do
     Printf.printf "\n>> Request file: %!" ;
     let fn = read_line () in
-    if String.trim fn = "!exit" then
-      kill_server_thread := true
-    else
+    if String.trim fn = "!exit" then (
+      kill_server_thread := true ;
+      (* Send blank message to initiate server thread death *)
+      send_message server_sock (ErrMsg "")
+    ) else
       match local_search self fn with
       | Some _ ->
           _log Log_Info "File '%s' is available locally\n%!" fn
