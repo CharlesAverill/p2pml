@@ -66,7 +66,8 @@ let handle_msg (self : node) (adj : adj_mat ref)
             send_message client_sock (ErrMsg e) ;
             keep := false ) ) ;
       true
-  | AugmentAdj (id, conns) ->
+  | AugmentAdj id ->
+      let id = id - 1 in
       _log Log_Info "Node %d is joining the network" id ;
       if id < Array.length !adj then
         send_message client_sock
@@ -77,7 +78,8 @@ let handle_msg (self : node) (adj : adj_mat ref)
                 (Array.length !adj) id ) )
       else (
         adj := pad_adj !adj (id + 1) ;
-        List.iteri (fun i b -> if b then !adj.(id).(i) <- 1) conns
+        !adj.(id).(self.uuid - 1) <- 1 ;
+        !adj.(self.uuid - 1).(id) <- 1
       ) ;
       true
   | LeaveNetwork id ->
@@ -103,7 +105,7 @@ let handle_msg (self : node) (adj : adj_mat ref)
              (read_shared peer_fds) )
       ) ;
       true
-  | DownloadData _ | ErrMsg _ ->
+  | DownloadData _ | ErrMsg _ | WelcomeAdj _ ->
       false
 
 (** Server thread - loop forever and wait for connections from other nodes *)

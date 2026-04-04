@@ -2,6 +2,7 @@
 
 open Common
 open Logging
+open Adjacency
 
 (** Messages sent between machines *)
 type message =
@@ -15,8 +16,10 @@ type message =
   | Download of path
   (* File transfer - filename * raw contents *)
   | DownloadData of path * bytes
-  (* Augment global adjacency matrix - machine index * connections *)
-  | AugmentAdj of int * bool list
+  (* Augment global adjacency matrix - sender machine index *)
+  | AugmentAdj of int
+  (* Welcome a new node to the network by sending them the global adjacency matrix *)
+  | WelcomeAdj of adj_mat
   (* Notice of departure from the network - machine index *)
   | LeaveNetwork of int
   (* Error occurred *)
@@ -37,16 +40,15 @@ let bytes_of_message (m : message) : bytes =
     | DownloadData (path, data) ->
         let plen = String.length path in
         Printf.sprintf "DOWNLOADDATA:%d:%s%s" plen path (Bytes.to_string data)
-    | AugmentAdj (id, conns) ->
-        Printf.sprintf "AUGMENTADJ:%d:%s" id
-          (String.concat ""
-             (List.map
-                (fun b ->
-                  if b then
-                    "1"
-                  else
-                    "0" )
-                conns ) )
+    | AugmentAdj id ->
+        Printf.sprintf "AUGMENTADJ:%d" id
+    | WelcomeAdj adj ->
+        Printf.sprintf "WELCOME:%s"
+          ( Array.map
+              (fun row ->
+                Array.map string_of_int row |> Array.to_list |> String.concat "" )
+              adj
+          |> Array.to_list |> String.concat "|" )
     | LeaveNetwork id ->
         Printf.sprintf "LEAVENET:%d" id
     | ErrMsg s ->
@@ -116,27 +118,33 @@ let message_of_bytes (b : bytes) : message option =
       if not (string_match (regexp "LEAVENET:\\([0-9]+\\)") s' 0) then
         None
       else
-        let id = int_of_string (matched_group 1 s') in
-        Some (LeaveNetwork id)
+        Some (LeaveNetwork (int_of_string (matched_group 1 s')))
   | s' when String.starts_with ~prefix:"AUGMENTADJ:" s' ->
       (* AUGMENTADJ:<id>:<conns> *)
-      if not (string_match (regexp "AUGMENTADJ:\\([0-9]+\\):\\([0-1]+\\)") s' 0)
-      then
+      if not (string_match (regexp "AUGMENTADJ:\\([0-9]+\\)") s' 0) then
         None
       else
-        let id = int_of_string (matched_group 1 s') in
-        let rest = matched_group 2 s' in
-        let conns =
-          List.of_seq
-            (Seq.map
-               (fun c ->
-                 if c = '1' then
-                   true
-                 else
-                   false )
-               (String.to_seq rest) )
+        Some (AugmentAdj (int_of_string (matched_group 1 s')))
+  | s' when String.starts_with ~prefix:"WELCOME:" s' ->
+      (* AUGMENTADJ:<id>:<conns> *)
+      if not (string_match (regexp "WELCOME:\\([0-1|\\|]+\\)") s' 0) then
+        None
+      else
+        let rest = matched_group 1 s' in
+        let adj =
+          List.map
+            (fun row ->
+              String.to_seq row
+              |> Seq.map (fun c ->
+                  if c = '0' then
+                    0
+                  else
+                    1 )
+              |> Array.of_seq )
+            (String.split_on_char '|' rest)
+          |> Array.of_list
         in
-        Some (AugmentAdj (id, conns))
+        Some (WelcomeAdj adj)
   | s' when String.starts_with ~prefix:"ERR:" s' ->
       if not (string_match (regexp "ERR:\\(.*\\)") s' 0) then
         None

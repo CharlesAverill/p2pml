@@ -36,9 +36,9 @@ let handle_bang s adj server_sock outbound_fds =
   | "!exit" ->
       write_shared kill_server_thread true ;
       (* Send blank message to initiate server thread death *)
-    let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-    Unix.connect sock (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) ;
-    Unix.close sock
+      let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+      Unix.connect sock (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) ;
+      Unix.close sock
   | "!connections" ->
       print_connection_info outbound_fds
   | "!adj" ->
@@ -46,23 +46,42 @@ let handle_bang s adj server_sock outbound_fds =
   | _ ->
       unreachable ()
 
-let () =
-  Random.self_init () ;
-  let args = parse_arguments () in
-  (* Part 1 Step 2 *)
-  let adj =
-    match read_adj args.adjacency_file with
-    | None ->
-        fatal rc_Error "Failed to parse adjacency file"
-    | Some adj ->
-        if connected adj then (
-          _log Log_Info "Adjacency matrix represents connected graph" ;
-          adj
-        ) else
-          fatal rc_Error "Adjacency matrix does not represent a connected graph"
+let init (args : arguments) server_sock =
+  let adj, self =
+    match args.join_node with
+    | None -> (
+      (* Part 1 Step 2 *)
+      match read_adj args.adjacency_file with
+      | None ->
+          fatal rc_Error "Failed to parse adjacency file"
+      | Some adj ->
+          if connected adj then (
+            _log Log_Info "Adjacency matrix represents connected graph" ;
+            (* Part 1 Step 4 *)
+            let self = construct_node (Array.length adj) in
+            (adj, self)
+          ) else
+            fatal rc_Error
+              "Adjacency matrix does not represent a connected graph" )
+    | Some hostname ->
+        let self = construct_node 0 in
+        let join_addr = (Unix.gethostbyname hostname).Unix.h_addr_list.(0) in
+        let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+        repeat_try_connect sock (Unix.ADDR_INET (join_addr, port)) ;
+        send_message sock (AugmentAdj self.uuid) ;
+        let adj =
+          match recv_message sock with
+          | Some (WelcomeAdj adj), _ ->
+              adj
+          | _, buf ->
+              send_message sock (LeaveNetwork self.uuid) ;
+              fatal rc_Error
+                "Failed to connect to network, received [%s] instead of \
+                 welcome message"
+                (String.of_bytes buf)
+        in
+        (adj, self)
   in
-  (* Part 1 Step 4 *)
-  let self = construct_node (Array.length adj) in
   (* Determine which neighbors we should connect to (1-indexed) *)
   let neighbour_addrs =
     List.map
@@ -80,12 +99,6 @@ let () =
   in
   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
   let peer_fds = create_shared [] in
-  (* Start listening server *)
-  let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Unix.setsockopt server_sock Unix.SO_REUSEADDR true ;
-  Unix.bind server_sock
-    (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
-  Unix.listen server_sock 64 ;
   let adj = ref adj in
   (* Create the outbound_fds ref early for the server thread - it won't be 
      accessed until an exit occurs, well after it is initialized *)
@@ -106,6 +119,20 @@ let () =
           () )
       neighbour_addrs
   in
+  (adj, self, threads, outbound_fds, peer_fds)
+
+let () =
+  Random.self_init () ;
+  let args = parse_arguments () in
+  (* Start server listening *)
+  let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt server_sock Unix.SO_REUSEADDR true ;
+  Unix.bind server_sock
+    (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
+  Unix.listen server_sock 64 ;
+  (* Initialize node *)
+  let adj, self, threads, outbound_fds, peer_fds = init args server_sock in
+  (* Wait until all initial nodes are connected and print their machine information *)
   List.iter Thread.join threads ;
   print_connection_info (read_shared outbound_fds) ;
   (* Part 2 - interactive search + download loop *)
