@@ -99,7 +99,7 @@ let init (args : arguments) server_sock =
   in
   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
   let peer_fds = create_shared [] in
-  let adj = ref adj in
+  let adj = create_shared adj in
   (* Create the outbound_fds ref early for the server thread - it won't be 
      accessed until an exit occurs, well after it is initialized *)
   let outbound_fds = create_shared [] in
@@ -140,14 +140,15 @@ let () =
     Printf.printf "\n>> %!" ;
     let fn = read_line () in
     if String.starts_with ~prefix:"!" (String.trim fn) then
-      handle_bang (String.trim fn) !adj server_sock (read_shared outbound_fds)
+      handle_bang (String.trim fn) (read_shared adj) server_sock
+        (read_shared outbound_fds)
     else if fn <> "" then
       match local_search self fn with
       | Some _ ->
           _log Log_Info "File '%s' is available locally\n%!" fn
       | None ->
           let search_results =
-            search fn self.uuid !adj (read_shared peer_fds)
+            search fn self.uuid (read_shared adj) (read_shared peer_fds)
           in
           if search_results = [] then
             _log Log_Error "File '%s' not found in network\n%!" fn

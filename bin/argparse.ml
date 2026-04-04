@@ -39,7 +39,8 @@ let parse_arguments () =
         adj := n
       ) )
     usage_msg ;
-  if (not !found_adj) || (!found_adj && !join_node <> "") then
+  if ((not !found_adj) && !join_node = "") || (!found_adj && !join_node <> "")
+  then
     fatal rc_Error "%s" usage_msg ;
   { adjacency_file= !adj
   ; join_node=
