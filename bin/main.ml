@@ -34,7 +34,7 @@ let handle_bang s adj server_sock outbound_fds =
   | "!help" ->
       print_help_message ()
   | "!exit" ->
-      kill_server_thread := true ;
+      write_shared kill_server_thread true ;
       (* Send blank message to initiate server thread death *)
       send_message server_sock (ErrMsg "")
   | "!connections" ->
@@ -77,8 +77,7 @@ let () =
             adj.(self.uuid - 1) ) )
   in
   (* Shared live peer-fd list (addr * fd) - server reads this for forwarding *)
-  let peer_fds : (Unix.inet_addr * Unix.file_descr) list ref = ref [] in
-  let peer_fds_mutex = Mutex.create () in
+  let peer_fds = create_shared [] in
   (* Start listening server *)
   let server_sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
   Unix.setsockopt server_sock Unix.SO_REUSEADDR true ;
@@ -88,13 +87,9 @@ let () =
   let adj = ref adj in
   (* Create the outbound_fds ref early for the server thread - it won't be 
      accessed until an exit occurs, well after it is initialized *)
-  let outbound_fds = ref [] in
-  let outbound_fds_mutex = Mutex.create () in
+  let outbound_fds = create_shared [] in
   let _server_thread =
-    Thread.create
-      (server server_sock self adj peer_fds peer_fds_mutex outbound_fds
-         outbound_fds_mutex )
-      ()
+    Thread.create (server server_sock self adj peer_fds outbound_fds) ()
   in
   (* Connect to neighbours concurrently *)
   let threads =
@@ -104,31 +99,27 @@ let () =
           (fun () ->
             let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
             repeat_try_connect sock (Unix.ADDR_INET (addr, port)) ;
-            Mutex.lock peer_fds_mutex ;
-            Mutex.lock outbound_fds_mutex ;
-            peer_fds := (addr, sock) :: !peer_fds ;
-            outbound_fds := (addr, sock) :: !outbound_fds ;
-            Mutex.unlock peer_fds_mutex ;
-            Mutex.unlock outbound_fds_mutex )
+            update_shared peer_fds (fun tl -> (addr, sock) :: tl) ;
+            update_shared outbound_fds (fun tl -> (addr, sock) :: tl) )
           () )
       neighbour_addrs
   in
   List.iter Thread.join threads ;
-  print_connection_info !outbound_fds ;
+  print_connection_info (read_shared outbound_fds) ;
   (* Part 2 - interactive search + download loop *)
-  while not !kill_server_thread do
+  while (not (read_shared kill_server_thread)) || read_shared server_alive do
     Printf.printf "\n>> %!" ;
     let fn = read_line () in
-    if String.starts_with ~prefix:"!" (String.trim fn) then (
-      Mutex.lock outbound_fds_mutex ;
-      handle_bang (String.trim fn) !adj server_sock !outbound_fds ;
-      Mutex.unlock outbound_fds_mutex
-    ) else
+    if String.starts_with ~prefix:"!" (String.trim fn) then
+      handle_bang (String.trim fn) !adj server_sock (read_shared outbound_fds)
+    else if fn <> "" then
       match local_search self fn with
       | Some _ ->
           _log Log_Info "File '%s' is available locally\n%!" fn
       | None ->
-          let search_results = search fn self.uuid !adj !peer_fds in
+          let search_results =
+            search fn self.uuid !adj (read_shared peer_fds)
+          in
           if search_results = [] then
             _log Log_Error "File '%s' not found in network\n%!" fn
           else (

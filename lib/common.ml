@@ -68,3 +68,26 @@ let recv_with_timeout (fd : Unix.file_descr) (buf : bytes) (ofs : int)
 
 (** Denotes unreachable control-flow branches *)
 let unreachable () = fatal rc_Error "Unreachable"
+
+type 'a shared = 'a ref * Mutex.t
+
+let create_shared (bottom : 'a) : 'a shared = (ref bottom, Mutex.create ())
+
+(** Safely read the value of a shared reference *)
+let read_shared (x : 'a shared) : 'a =
+  Mutex.lock (snd x) ;
+  let xval = !(fst x) in
+  Mutex.unlock (snd x) ;
+  xval
+
+(** Safely set the value of a shared reference *)
+let write_shared (x : 'a shared) (y : 'a) : unit =
+  Mutex.lock (snd x) ;
+  fst x := y ;
+  Mutex.unlock (snd x)
+
+(** Update the value of a shared reference given its current value *)
+let update_shared (x : 'a shared) (y : 'a -> 'a) : unit =
+  Mutex.lock (snd x) ;
+  fst x := y !(fst x) ;
+  Mutex.unlock (snd x)

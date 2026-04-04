@@ -61,27 +61,24 @@ let nodes_at_dist i adj dist_val : int list =
 (** Maps search UUID -> address of node we received it from
 
    None means we are the initiator *)
-let seen_table : (int, Unix.inet_addr option) Hashtbl.t = Hashtbl.create 64
-
-let seen_mutex : Mutex.t = Mutex.create ()
+let seen_table = create_shared (Hashtbl.create 64)
 
 (** Record that we have seen [uuid] coming from [from_addr]
 
     Returns whether this is the first time [uuid] was seen *)
 let record_seen (uuid : int) (from_addr : Unix.inet_addr option) : bool =
-  Mutex.lock seen_mutex ;
-  let fresh = not (Hashtbl.mem seen_table uuid) in
-  if fresh then Hashtbl.add seen_table uuid from_addr ;
-  Mutex.unlock seen_mutex ;
+  Mutex.lock (snd seen_table) ;
+  let tab = !(fst seen_table) in
+  let fresh = not (Hashtbl.mem tab uuid) in
+  if fresh then Hashtbl.add tab uuid from_addr ;
+  Mutex.unlock (snd seen_table) ;
   fresh
 
 (** Get the address to forward a SearchResult back toward the initiator
 
    Returns [None] if we are the initiator *)
 let upstream_of (uuid : int) : Unix.inet_addr option =
-  Mutex.lock seen_mutex ;
-  let r = Hashtbl.find_opt seen_table uuid in
-  Mutex.unlock seen_mutex ;
+  let r = Hashtbl.find_opt (read_shared seen_table) uuid in
   match r with
   | None ->
       (* uuid not in table at all - shouldn't happen *)
@@ -91,49 +88,47 @@ let upstream_of (uuid : int) : Unix.inet_addr option =
 
 (** Remove state for a completed search *)
 let forget (uuid : int) : unit =
-  Mutex.lock seen_mutex ;
-  Hashtbl.remove seen_table uuid ;
-  Mutex.unlock seen_mutex
+  Mutex.lock (snd seen_table) ;
+  Hashtbl.remove !(fst seen_table) uuid ;
+  Mutex.unlock (snd seen_table)
 
 (** Search results table *)
-let results_table : (int, (path * string) list ref) Hashtbl.t =
-  Hashtbl.create 16
-
-let results_mutex : Mutex.t = Mutex.create ()
+let results_table = create_shared (Hashtbl.create 16)
 
 (** Initialize search results table with [uuid] as the initializer's ID *)
 let init_results (uuid : int) : unit =
-  Mutex.lock results_mutex ;
-  Hashtbl.replace results_table uuid (ref []) ;
-  Mutex.unlock results_mutex
+  Mutex.lock (snd results_table) ;
+  Hashtbl.replace !(fst results_table) uuid (ref []) ;
+  Mutex.unlock (snd results_table)
 
 (** Add result [fn] @ [host]([uuid]) to the result table *)
 let add_result (uuid : int) (fn : path) (host : string) : unit =
-  Mutex.lock results_mutex ;
-  ( match Hashtbl.find_opt results_table uuid with
+  Mutex.lock (snd results_table) ;
+  ( match Hashtbl.find_opt !(fst results_table) uuid with
   | Some lst ->
       lst := (fn, host) :: !lst
   | None ->
       () ) ;
-  Mutex.unlock results_mutex
+  Mutex.unlock (snd results_table)
 
 (** Get the search results that have returned to the initiator described by [uuid] *)
 let get_results (uuid : int) : (path * string) list =
-  Mutex.lock results_mutex ;
+  Mutex.lock (snd results_table) ;
   let r =
-    match Hashtbl.find_opt results_table uuid with
+    match Hashtbl.find_opt !(fst results_table) uuid with
     | Some lst ->
         !lst
     | None ->
         []
   in
-  Mutex.unlock results_mutex ; r
+  Mutex.unlock (snd results_table) ;
+  r
 
 (** Clear the search results after a completed search *)
 let cleanup_results (uuid : int) : unit =
-  Mutex.lock results_mutex ;
-  Hashtbl.remove results_table uuid ;
-  Mutex.unlock results_mutex
+  Mutex.lock (snd results_table) ;
+  Hashtbl.remove !(fst results_table) uuid ;
+  Mutex.unlock (snd results_table)
 
 (** Open a fresh connection to [addr] and send a message [msg] *)
 let send_to_addr (addr : Unix.inet_addr) (msg : message) : unit =
