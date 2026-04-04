@@ -36,7 +36,9 @@ let handle_bang s adj server_sock outbound_fds =
   | "!exit" ->
       write_shared kill_server_thread true ;
       (* Send blank message to initiate server thread death *)
-      send_message server_sock (ErrMsg "")
+    let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+    Unix.connect sock (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) ;
+    Unix.close sock
   | "!connections" ->
       print_connection_info outbound_fds
   | "!adj" ->

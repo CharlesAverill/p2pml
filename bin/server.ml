@@ -24,7 +24,7 @@ let handle_msg (self : node) (adj : adj_mat ref)
       let msg = Bytes.of_string (string_of_node self) in
       ignore (Unix.send client_sock msg 0 (Bytes.length msg) []) ;
       true
-  | Search (uuid, fn, hops) when read_shared kill_server_thread ->
+  | Search (uuid, fn, hops) when not (read_shared kill_server_thread) ->
       _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
       handle_search_message
         (Search (uuid, fn, hops))
@@ -81,6 +81,7 @@ let handle_msg (self : node) (adj : adj_mat ref)
       ) ;
       true
   | LeaveNetwork id ->
+      let id = id - 1 in
       _log Log_Info "Node %d is leaving the network" id ;
       if id >= Array.length !adj then
         send_message client_sock
