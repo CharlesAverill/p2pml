@@ -15,8 +15,10 @@ type message =
   | Download of path
   (* File transfer - filename * raw contents *)
   | DownloadData of path * bytes
-  (* Update global adjacency matrix - machine index * connections *)
-  | UpdateAdj of int * bool list
+  (* Augment global adjacency matrix - machine index * connections *)
+  | AugmentAdj of int * bool list
+  (* Notice of departure from the network - machine index *)
+  | LeaveNetwork of int
   (* Error occurred *)
   | ErrMsg of string
 
@@ -35,8 +37,8 @@ let bytes_of_message (m : message) : bytes =
     | DownloadData (path, data) ->
         let plen = String.length path in
         Printf.sprintf "DOWNLOADDATA:%d:%s%s" plen path (Bytes.to_string data)
-    | UpdateAdj (id, conns) ->
-        Printf.sprintf "UPDATEADJ:%d:%s" id
+    | AugmentAdj (id, conns) ->
+        Printf.sprintf "AUGMENTADJ:%d:%s" id
           (String.concat ""
              (List.map
                 (fun b ->
@@ -45,6 +47,8 @@ let bytes_of_message (m : message) : bytes =
                   else
                     "0" )
                 conns ) )
+    | LeaveNetwork id ->
+        Printf.sprintf "LEAVENET:%d" id
     | ErrMsg s ->
         Printf.sprintf "ERR:%s" s )
 
@@ -107,11 +111,16 @@ let message_of_bytes (b : bytes) : message option =
           Bytes.of_string (String.sub rest plen (String.length rest - plen))
         in
         Some (DownloadData (path, data))
-  | s' when String.starts_with ~prefix:"UPDATEADJ:" s' ->
-      (* UPDATEADJ:<id>:<conns> *)
-      if
-        not
-          (string_match (regexp "DOWNLOADDATA:\\([0-9]+\\):\\([0-1]+\\)") s' 0)
+  | s' when String.starts_with ~prefix:"LEAVENET:" s' ->
+      (* LEAVENET:<id> *)
+      if not (string_match (regexp "LEAVENET:\\([0-9]+\\)") s' 0) then
+        None
+      else
+        let id = int_of_string (matched_group 1 s') in
+        Some (LeaveNetwork id)
+  | s' when String.starts_with ~prefix:"AUGMENTADJ:" s' ->
+      (* AUGMENTADJ:<id>:<conns> *)
+      if not (string_match (regexp "AUGMENTADJ:\\([0-9]+\\):\\([0-1]+\\)") s' 0)
       then
         None
       else
@@ -127,7 +136,7 @@ let message_of_bytes (b : bytes) : message option =
                    false )
                (String.to_seq rest) )
         in
-        Some (UpdateAdj (id, conns))
+        Some (AugmentAdj (id, conns))
   | s' when String.starts_with ~prefix:"ERR:" s' ->
       if not (string_match (regexp "ERR:\\(.*\\)") s' 0) then
         None

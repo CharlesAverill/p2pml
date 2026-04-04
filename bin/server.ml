@@ -10,8 +10,9 @@ open Adjacency
 
     Returns false if an unexpected message was received *)
 let handle_msg (self : node) (adj : adj_mat ref)
-    (peer_fds : (Unix.inet_addr * Unix.file_descr) list) (addr : Unix.inet_addr)
-    (client_sock : Unix.file_descr) (keep : bool ref) = function
+    (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
+    (addr : Unix.inet_addr) (client_sock : Unix.file_descr) (keep : bool ref) =
+  function
   | MachineInfo ->
       _log Log_Info "Received MachineInfo request" ;
       let msg = Bytes.of_string (string_of_node self) in
@@ -21,13 +22,13 @@ let handle_msg (self : node) (adj : adj_mat ref)
       _log Log_Info "Received Search request (%d, %s, %d)" uuid fn hops ;
       handle_search_message
         (Search (uuid, fn, hops))
-        addr self.files self.machine.hostname self.uuid !adj peer_fds ;
+        addr self.files self.machine.hostname self.uuid !adj !peer_fds ;
       true
   | SearchResult (uuid, fn, host) ->
       _log Log_Info "Received SearchResult (%d, %s, %s)" uuid fn host ;
       handle_search_message
         (SearchResult (uuid, fn, host))
-        addr self.files self.machine.hostname self.uuid !adj peer_fds ;
+        addr self.files self.machine.hostname self.uuid !adj !peer_fds ;
       true
   | Download fn ->
       ( _log Log_Info "Received Download request (%s)" fn ;
@@ -52,26 +53,54 @@ let handle_msg (self : node) (adj : adj_mat ref)
             send_message client_sock (ErrMsg e) ;
             keep := false ) ) ;
       true
-  | UpdateAdj (id, conns) ->
-      if id < Array.length !adj then (
+  | AugmentAdj (id, conns) ->
+      _log Log_Info "Node %d is joining the network" id ;
+      if id < Array.length !adj then
         send_message client_sock
           (ErrMsg
              (Printf.sprintf
-                "Invalid machine index for joining. Expected id < %d but got %d"
-                (Array.length !adj) id ) ) ;
-        false
-      ) else (
+                "Invalid machine index for joining. Expected id >= %d but got \
+                 %d"
+                (Array.length !adj) id ) )
+      else (
         adj := pad_adj !adj (id + 1) ;
-        List.iteri (fun i b -> if b then !adj.(id).(i) <- 1) conns ;
-        true
-      )
+        List.iteri (fun i b -> if b then !adj.(id).(i) <- 1) conns
+      ) ;
+      true
+  | LeaveNetwork id ->
+      _log Log_Info "Node %d is leaving the network" id ;
+      if id >= Array.length !adj then
+        send_message client_sock
+          (ErrMsg
+             (Printf.sprintf
+                "Invalid machine index for leaving. Expected id < %d but got %d"
+                (Array.length !adj) id ) )
+      else (
+        (* Clear <id>'s connection row *)
+        !adj.(id) <- Array.make (Array.length !adj) 0 ;
+        (* Clear <id>'s connection column *)
+        for i = 0 to id do
+          !adj.(i).(id) <- 0
+        done ;
+        (* Remove <id>'s entry in peer_fds *)
+        peer_fds :=
+          List.filter (fun (addr, _) -> id_of_dc_utd_ip addr <> id) !peer_fds
+      ) ;
+      true
   | DownloadData _ | ErrMsg _ ->
       false
 
-(* Server thread - loop forever and wait for connections from other nodes *)
+(** Denotes if the server thread should be killed, e.g., upon leaving the network *)
+let kill_server_thread = ref false
+
+(** Server thread - loop forever and wait for connections from other nodes *)
 let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
     (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
     (peer_fds_mutex : Mutex.t) () : unit =
+  if !kill_server_thread then (
+    _log Log_Critical "Leaving the network upon user request" ;
+    exit 0
+  ) ;
   let client_sock, client_addr = Unix.accept server_sock in
   let addr =
     match client_addr with
@@ -91,14 +120,13 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
          while !keep do
            match recv_message client_sock with
            | Some msg, _
-             when handle_msg self adj !peer_fds addr client_sock keep msg = true
+             when handle_msg self adj peer_fds addr client_sock keep msg = true
              ->
                ()
            | _, buf ->
                _log Log_Error "Server received unexpected message: %s"
                  (String.sub (Bytes.to_string buf) 0
-                    (min 64 (Bytes.length buf)) ) ;
-               keep := false
+                    (min 64 (Bytes.length buf)) )
          done ;
          Unix.close client_sock )
        () ) ;

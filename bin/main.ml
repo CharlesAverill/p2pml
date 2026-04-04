@@ -82,39 +82,42 @@ let () =
   while true do
     Printf.printf "\n>> Request file: %!" ;
     let fn = read_line () in
-    match local_search self fn with
-    | Some _ ->
-        _log Log_Info "File '%s' is available locally\n%!" fn
-    | None ->
-        let search_results = search fn self.uuid !adj !peer_fds in
-        if search_results = [] then
-          _log Log_Error "File '%s' not found in network\n%!" fn
-        else (
-          (* Part 2 Step 7 *)
-          Printf.printf "\nSearch results:\n" ;
-          List.iteri
-            (fun i (found_fn, node_name) ->
-              Printf.printf "  %d) %s @ %s\n" i found_fn node_name )
-            search_results ;
-          let n_results = List.length search_results in
-          let selection = ref (-1) in
-          while !selection < 0 || !selection >= n_results do
-            Printf.printf "\n>> Select index to download from (0-%d): %!"
-              (n_results - 1) ;
-            try selection := read_int () with Failure _ -> ()
-          done ;
-          let chosen_fn, chosen_host = List.nth search_results !selection in
-          (* Part 2 Step 8 *)
-          _log Log_Debug "Downloading '%s' from %sn%!" chosen_fn chosen_host ;
-          let remote_addr =
-            (Unix.gethostbyname chosen_host).Unix.h_addr_list.(0)
-          in
-          match download_file chosen_fn remote_addr self.root with
-          | None ->
-              _log Log_Error "Download failed.\n%!"
-          | Some local_path ->
-              self.files <- local_path :: self.files ;
-              _log Log_Info "Saved to '%s'. File added to share list.\n%!"
-                local_path
-        )
+    if String.trim fn = "!exit" then
+      kill_server_thread := true
+    else
+      match local_search self fn with
+      | Some _ ->
+          _log Log_Info "File '%s' is available locally\n%!" fn
+      | None ->
+          let search_results = search fn self.uuid !adj !peer_fds in
+          if search_results = [] then
+            _log Log_Error "File '%s' not found in network\n%!" fn
+          else (
+            (* Part 2 Step 7 *)
+            Printf.printf "\nSearch results:\n" ;
+            List.iteri
+              (fun i (found_fn, node_name) ->
+                Printf.printf "  %d) %s @ %s\n" i found_fn node_name )
+              search_results ;
+            let n_results = List.length search_results in
+            let selection = ref (-1) in
+            while !selection < 0 || !selection >= n_results do
+              Printf.printf "\n>> Select index to download from (0-%d): %!"
+                (n_results - 1) ;
+              try selection := read_int () with Failure _ -> ()
+            done ;
+            let chosen_fn, chosen_host = List.nth search_results !selection in
+            (* Part 2 Step 8 *)
+            _log Log_Debug "Downloading '%s' from %sn%!" chosen_fn chosen_host ;
+            let remote_addr =
+              (Unix.gethostbyname chosen_host).Unix.h_addr_list.(0)
+            in
+            match download_file chosen_fn remote_addr self.root with
+            | None ->
+                _log Log_Error "Download failed.\n%!"
+            | Some local_path ->
+                self.files <- local_path :: self.files ;
+                _log Log_Info "Saved to '%s'. File added to share list.\n%!"
+                  local_path
+          )
   done
