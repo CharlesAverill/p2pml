@@ -83,6 +83,44 @@ completed search is removed immediately after the timer expires, ensuring
 stale search state is not retained.
 
 ## Design Part III
+ 
+A node wishing to join an existing network passes a known node's hostname via
+the `--join` command-line argument. In [main.ml](bin/main.ml), this causes
+`init` to take the join path: it constructs the node, opens a stream socket
+to the known node, and sends an `AugmentAdj` message carrying its own UUID
+(see `Part 3 Step 2`). It then blocks on `recv_message` waiting for a
+`WelcomeAdj` reply containing the current global adjacency matrix. Once
+received, `init` continues as normal: it reads the relevant row of the new
+adjacency matrix to determine its neighbours, and connects to them concurrently
+in threads.
+ 
+When [server.ml](bin/server.ml) receives an `AugmentAdj` message, it updates
+the shared adjacency matrix by expanding it via `pad_adj` if necessary and
+setting the bidirectional link between the joining node and itself. It sends a
+`WelcomeAdj` reply directly to the joining node, then floods `WelcomeAdj` to
+all current outbound connections so the rest of the network learns of the
+topology change.
+ 
+When a node receives a `WelcomeAdj` message, it compares the received matrix
+to its own. If they differ, it updates its local copy and re-floods the
+`WelcomeAdj` to its own outbound connections, propagating the change through
+the network regardless of topology. If they are identical the message is
+silently dropped, preventing broadcast storms.
+ 
+A node departs by typing `!exit` at the prompt. [main.ml](bin/main.ml) sets
+`kill_server_thread` to true and connects to its own server port to unblock
+`Unix.accept`. The server thread, upon returning from `accept`, checks
+`kill_server_thread` and rather than recursing, sends a `LeaveNetwork` message
+carrying its UUID to each outbound neighbour, then sets `server_alive` to false
+(see `Part 3 Step 3`).
+The blocking `accept` only occurs after all other operations, such as downloads,
+have terminated.
+ 
+When [server.ml](bin/server.ml) receives a `LeaveNetwork` message, it zeroes
+the departing node's row and column in the shared adjacency matrix and removes
+the corresponding entry from `peer_fds` (see `Part 3 Step 4`). It then sets
+`keep := false` to close the connection, which unblocks the departing node's
+send-side wait and allows it to exit cleanly.
 
 ## Building
 

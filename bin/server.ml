@@ -70,6 +70,7 @@ let handle_msg (self : node) (adj : adj_mat shared)
   | AugmentAdj id ->
       _log Log_Info "Node %d is joining the network" id ;
       let id = id - 1 in
+      (* Part 3 Step 2 *)
       update_shared adj (fun f ->
           let f = pad_adj f (id + 1) in
           f.(id).(self.uuid - 1) <- 1 ;
@@ -81,6 +82,7 @@ let handle_msg (self : node) (adj : adj_mat shared)
           f ) ;
       true
   | LeaveNetwork id ->
+      (* Part 3 Step 4 *)
       _log Log_Info "Node %d is leaving the network" id ;
       let id = id - 1 in
       if id >= Array.length (read_shared adj) then

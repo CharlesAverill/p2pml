@@ -34,6 +34,7 @@ let handle_bang s adj server_sock outbound_fds =
   | "!help" ->
       print_help_message ()
   | "!exit" ->
+      (* Part 3 Step 3 *)
       write_shared kill_server_thread true ;
       (* Send blank message to initiate server thread death *)
       let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -68,6 +69,7 @@ let init (args : arguments) server_sock =
         let join_addr = (Unix.gethostbyname hostname).Unix.h_addr_list.(0) in
         let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
         repeat_try_connect sock (Unix.ADDR_INET (join_addr, port)) ;
+        (* Part 3 Step 2 *)
         send_message sock (AugmentAdj self.uuid) ;
         let adj =
           match recv_message sock with

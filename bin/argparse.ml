@@ -16,7 +16,8 @@ let parse_arguments () =
     [ ( "-v"
       , Arg.Unit (fun _ -> print_endline version_str ; exit 0)
       , "Display version information" )
-    ; ( "--join"
+    ; (* Part 3 Step 1 *)
+      ( "--join"
       , Arg.Set_string join_node
       , "Join an existing network by providing a connected node's address" ) ]
   in
