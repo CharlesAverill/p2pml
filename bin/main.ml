@@ -168,7 +168,7 @@ let () =
             done ;
             let chosen_fn, chosen_host = List.nth search_results !selection in
             (* Part 2 Step 8 *)
-            _log Log_Debug "Downloading '%s' from %sn%!" chosen_fn chosen_host ;
+            _log Log_Debug "Downloading '%s' from %s\n%!" chosen_fn chosen_host ;
             let remote_addr =
               (Unix.gethostbyname chosen_host).Unix.h_addr_list.(0)
             in

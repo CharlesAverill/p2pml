@@ -82,6 +82,8 @@ hop-count exceeds 16, at which point a "File not found" error is logged
 completed search is removed immediately after the timer expires, ensuring
 stale search state is not retained.
 
+## Design Part III
+
 ## Building
 
 Clone to CS servers `dcXX.utdallas.edu` - these have OCaml and Dune pre-installed.
@@ -276,4 +278,204 @@ LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 0)
 LOG:[INFO] - Received Search request (295261110, ./stores/03/hello03.txt, 0)
 LOG:[INFO] - Found './stores/03/hello03.txt', sending SearchResult to 10.182.157.5
 LOG:[INFO] - Received Download request (./stores/03/hello03.txt)
+```
+
+## Part III Log
+
+Clients 2 and 3 are booted via the provided adjacency matrix, while client 1 waits
+for a connection to client 2 via the `--join` command line option.
+Once the network is created according to the adjacency matrix, each node prints out
+the machine info of its connected nodes, as usual.
+
+Client 3 then leaves the network, broadcasting to client 2, which broadcasts the
+matrix change to client 1.
+Client 3 then re-joins via a direct connection to client 2 (similarly to how client
+1 joined), and then indirectly finds a file at client 1 through client 2, and downloads
+it.
+Finally, nodes 3, 2, and then 1 leave the network.
+
+
+### DC01
+
+```
+{dc01:~/6378/p2pml} dune exec -- p2pml --join dc02.utdallas.edu
+LOG:[DEBUG] - Sending message: AUGMENTADJ:1
+===Connection Information===
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 3
+UUID: 2
+Root: ./stores/02
+Files: [./stores/02/hello02.txt, ./stores/02/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc02.utdallas.edu
+
+>> LOG:[INFO] - Received MachineInfo request
+LOG:[INFO] - Received MachineInfo request
+
+
+>> !adj
+010
+101
+111
+
+>> LOG:[INFO] - Node 3 is leaving the network
+
+
+>> LOG:[INFO] - Received topology update
+LOG:[INFO] - Broadcasting topology update
+LOG:[DEBUG] - Sending message: WELCOME:010|101|010
+
+
+>> !adj
+010
+101
+010
+
+>> LOG:[INFO] - Received Search request (665276122, ./stores/01/hello01.txt, 0)
+LOG:[INFO] - Found './stores/01/hello01.txt', sending SearchResult to 10.182.157.5
+LOG:[DEBUG] - Sending message: SEARCHRES:665276122:dc01.utdallas.edu:./stores/01/hello01.txt
+LOG:[INFO] - Received Search request (665276122, ./stores/01/hello01.txt, 0)
+LOG:[INFO] - Received Search request (665276122, ./stores/01/hello01.txt, 0)
+LOG:[INFO] - Received Download request (./stores/01/hello01.txt)
+LOG:[DEBUG] - Sending message: DOWNLOADDATA:23:./stores/01/hello01.txt
+LOG:[INFO] - Node 2 is leaving the network
+
+
+>> !exit
+LOG:[CRITICAL] - Leaving the network upon user request
+LOG:[DEBUG] - Sending message: LEAVENET:1
+```
+
+### DC02
+
+```
+{dc02:~/6378/p2pml} dune exec -- p2pml ./example_adj.txt
+LOG:[INFO] - Adjacency matrix represents connected graph
+LOG:[INFO] - Node 1 is joining the network
+LOG:[DEBUG] - Sending message: WELCOME:010|101|111
+LOG:[DEBUG] - Sending message: WELCOME:010|101|111
+LOG:[INFO] - Received MachineInfo request
+===Connection Information===
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 0
+UUID: 1
+Root: ./stores/01
+Files: [./stores/01/hello01.txt, ./stores/01/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc01.utdallas.edu
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 3
+UUID: 3
+Root: ./stores/03
+Files: [./stores/03/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc03.utdallas.edu
+
+>> LOG:[INFO] - Received MachineInfo request
+
+
+>> LOG:[INFO] - Node 3 is leaving the network
+
+
+>> LOG:[INFO] - Node 3 is joining the network
+LOG:[DEBUG] - Sending message: WELCOME:010|101|010
+LOG:[DEBUG] - Sending message: WELCOME:010|101|010
+LOG:[DEBUG] - Sending message: WELCOME:010|101|010
+LOG:[INFO] - Received topology update
+LOG:[INFO] - Received MachineInfo request
+
+
+>> LOG:[INFO] - Received Search request (646112005, ./stores/01/hello01.txt, 0)
+LOG:[INFO] - Received Search request (665276122, ./stores/01/hello01.txt, 1)
+LOG:[DEBUG] - Sending message: SEARCH:665276122:0:./stores/01/hello01.txt
+LOG:[DEBUG] - Sending message: SEARCH:665276122:0:./stores/01/hello01.txt
+LOG:[DEBUG] - Sending message: SEARCH:665276122:0:./stores/01/hello01.txt
+LOG:[INFO] - Received SearchResult (665276122, ./stores/01/hello01.txt, dc01.utdallas.edu)
+LOG:[INFO] - Forwarding SearchResult for './stores/01/hello01.txt' upstream to 10.182.157.6
+LOG:[DEBUG] - Sending message: SEARCHRES:665276122:dc01.utdallas.edu:./stores/01/hello01.txt
+LOG:[INFO] - Node 3 is leaving the network
+
+
+>> !exit
+LOG:[CRITICAL] - Leaving the network upon user request
+LOG:[DEBUG] - Sending message: LEAVENET:2
+LOG:[DEBUG] - Sending message: LEAVENET:2
+{dc02:~/6378/p2pml} 
+```
+
+### DC03
+
+```
+{dc03:~/6378/p2pml} dune exec -- p2pml ./example_adj.txt
+LOG:[INFO] - Adjacency matrix represents connected graph
+LOG:[INFO] - Received topology update
+LOG:[INFO] - Received MachineInfo request
+===Connection Information===
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 0
+UUID: 1
+Root: ./stores/01
+Files: [./stores/01/hello01.txt, ./stores/01/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc01.utdallas.edu
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 3
+UUID: 2
+Root: ./stores/02
+Files: [./stores/02/hello02.txt, ./stores/02/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc02.utdallas.edu
+
+>> 
+
+>> !exit
+LOG:[CRITICAL] - Leaving the network upon user request
+LOG:[DEBUG] - Sending message: LEAVENET:3
+LOG:[DEBUG] - Sending message: LEAVENET:3
+{dc03:~/6378/p2pml} dune exec -- p2pml --join dc02.utdallas.edu
+LOG:[DEBUG] - Sending message: AUGMENTADJ:3
+===Connection Information===
+LOG:[DEBUG] - Sending message: MACHINE_INFO
+==Node==
+Network size: 3
+UUID: 2
+Root: ./stores/02
+Files: [./stores/02/hello02.txt, ./stores/02/hello03.txt]
+Connections: 
+=Machine Info=
+Hostname: dc02.utdallas.edu
+
+>> ./stores/01/hello01.txt
+LOG:[INFO] - Searching for './stores/01/hello01.txt' with hop-count=1 (timeout=1s)
+LOG:[DEBUG] - Sending message: SEARCH:646112005:0:./stores/01/hello01.txt
+LOG:[INFO] - No replies for './stores/01/hello01.txt' at hop-count=1; doubling.
+LOG:[INFO] - Searching for './stores/01/hello01.txt' with hop-count=2 (timeout=2s)
+LOG:[DEBUG] - Sending message: SEARCH:665276122:1:./stores/01/hello01.txt
+LOG:[INFO] - Received SearchResult (665276122, ./stores/01/hello01.txt, dc01.utdallas.edu)
+LOG:[INFO] - SearchResult for './stores/01/hello01.txt' reached initiator (from dc01.utdallas.edu)
+
+Search results:
+  0) ./stores/01/hello01.txt @ dc01.utdallas.edu
+
+>> Select index to download from (0-0): 0
+LOG:[DEBUG] - Downloading './stores/01/hello01.txt' from dc01.utdallas.edun
+LOG:[DEBUG] - Sending message: DOWNLOAD:./stores/01/hello01.txt
+LOG:[INFO] - Downloaded './stores/01/hello01.txt' -> './stores/03/hello01.txt'
+LOG:[INFO] - Saved to './stores/03/hello01.txt'. File added to share list.
+
+
+>> !exit
+LOG:[CRITICAL] - Leaving the network upon user request
+LOG:[DEBUG] - Sending message: LEAVENET:3
+{dc03:~/6378/p2pml} 
 ```

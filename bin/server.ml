@@ -68,8 +68,8 @@ let handle_msg (self : node) (adj : adj_mat shared)
             keep := false ) ) ;
       true
   | AugmentAdj id ->
-      let id = id - 1 in
       _log Log_Info "Node %d is joining the network" id ;
+      let id = id - 1 in
       update_shared adj (fun f ->
           let f = pad_adj f (id + 1) in
           f.(id).(self.uuid - 1) <- 1 ;
@@ -81,8 +81,8 @@ let handle_msg (self : node) (adj : adj_mat shared)
           f ) ;
       true
   | LeaveNetwork id ->
-      let id = id - 1 in
       _log Log_Info "Node %d is leaving the network" id ;
+      let id = id - 1 in
       if id >= Array.length (read_shared adj) then
         send_message client_sock
           (ErrMsg
@@ -144,7 +144,8 @@ let rec server (server_sock : Unix.file_descr) (self : node)
            try
              match recv_message client_sock with
              | Some msg, _
-               when handle_msg self adj peer_fds outbound_fds addr client_sock keep msg
+               when handle_msg self adj peer_fds outbound_fds addr client_sock
+                      keep msg
                     = true ->
                  ()
              | _, buf ->
