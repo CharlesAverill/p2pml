@@ -8,6 +8,7 @@ open Logging
 open Argparse
 open Server
 
+(** Request machine information from connected nodes and print it *)
 let print_connection_info outbound_fds =
   print_endline "===Connection Information===" ;
   List.iter
@@ -18,6 +19,7 @@ let print_connection_info outbound_fds =
       print_endline (String.of_bytes buf) )
     outbound_fds
 
+(** Print a help message *)
 let print_help_message () =
   print_endline
     {|
@@ -29,6 +31,7 @@ Enter a file to search the network for, or:
   !adj - print the network's current adjacency matrix
 |}
 
+(** Handle non-file-search operations *)
 let handle_bang s adj server_sock outbound_fds =
   match s with
   | "!help" ->
@@ -47,6 +50,7 @@ let handle_bang s adj server_sock outbound_fds =
   | _ ->
       unreachable ()
 
+(** Initialize the node *)
 let init (args : arguments) server_sock =
   let adj, self =
     match args.join_node with
@@ -123,6 +127,7 @@ let init (args : arguments) server_sock =
   in
   (adj, self, threads, outbound_fds, peer_fds)
 
+(** Program entrypoint *)
 let () =
   Random.self_init () ;
   let args = parse_arguments () in
