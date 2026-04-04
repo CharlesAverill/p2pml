@@ -8,6 +8,41 @@ open Logging
 open Argparse
 open Server
 
+let print_connection_info outbound_fds =
+  print_endline "===Connection Information===" ;
+  List.iter
+    (fun (_, sock) ->
+      send_message sock MachineInfo ;
+      let buf = Bytes.create bufsize in
+      ignore (Unix.recv sock buf 0 bufsize []) ;
+      print_endline (String.of_bytes buf) )
+    outbound_fds
+
+let print_help_message () =
+  print_endline {|
+Enter a file to search the network for, or:
+
+  !help - print this message
+  !exit - leave the network and terminate
+  !connections - show the information of connected machines
+  !adj - print the network's current adjacency matrix
+
+>> |}
+
+let handle_bang s adj server_sock outbound_fds =
+  match s with
+  | "!help" -> print_help_message ()
+  | "!exit" ->
+      kill_server_thread := true ;
+      (* Send blank message to initiate server thread death *)
+      send_message server_sock (ErrMsg "")
+  | "!connections" ->
+      print_connection_info outbound_fds
+  | "!adj" ->
+      print_endline (string_of_adj adj)
+  | _ ->
+      unreachable ()
+
 let () =
   Random.self_init () ;
   let args = parse_arguments () in
@@ -70,23 +105,14 @@ let () =
       neighbour_addrs
   in
   List.iter Thread.join threads ;
-  print_endline "===Connection Information===" ;
-  List.iter
-    (fun (_, sock) ->
-      send_message sock MachineInfo ;
-      let buf = Bytes.create bufsize in
-      ignore (Unix.recv sock buf 0 bufsize []) ;
-      print_endline (String.of_bytes buf) )
-    !outbound_fds ;
+  print_connection_info !outbound_fds ;
   (* Part 2 - interactive search + download loop *)
   while not !kill_server_thread do
-    Printf.printf "\n>> Request file: %!" ;
+    Printf.printf "\n>> %!" ;
     let fn = read_line () in
-    if String.trim fn = "!exit" then (
-      kill_server_thread := true ;
-      (* Send blank message to initiate server thread death *)
-      send_message server_sock (ErrMsg "")
-    ) else
+    if String.starts_with ~prefix:"!" (String.trim fn) then
+      handle_bang (String.trim fn) !adj server_sock !outbound_fds
+    else
       match local_search self fn with
       | Some _ ->
           _log Log_Info "File '%s' is available locally\n%!" fn

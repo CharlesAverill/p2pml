@@ -10,6 +10,12 @@ open IntSet
 
 type adj_mat = int array array
 
+let string_of_adj (adj : adj_mat) : string =
+  Array.map
+    (fun row -> Array.map string_of_int row |> Array.to_list |> String.concat "")
+    adj
+  |> Array.to_list |> String.concat "\n"
+
 (** Parse adjacency matrix from a text file located at [p] *)
 let read_adj (p : path) : adj_mat option =
   let arr =
