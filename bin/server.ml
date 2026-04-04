@@ -106,7 +106,9 @@ let handle_msg (self : node) (adj : adj_mat ref)
 (** Server thread - loop forever and wait for connections from other nodes *)
 let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
     (peer_fds : (Unix.inet_addr * Unix.file_descr) list ref)
-    (peer_fds_mutex : Mutex.t) () : unit =
+    (peer_fds_mutex : Mutex.t)
+    (outbound_fds : (Unix.inet_addr * Unix.file_descr) list ref)
+    (outbound_fds_mutex : Mutex.t) () : unit =
   let client_sock, client_addr = Unix.accept server_sock in
   let addr =
     match client_addr with
@@ -140,8 +142,11 @@ let rec server (server_sock : Unix.file_descr) (self : node) (adj : adj_mat ref)
        () ) ;
   if !kill_server_thread then (
     _log Log_Critical "Leaving the network upon user request" ;
+    Mutex.lock outbound_fds_mutex ;
     List.iter
       (fun (_, peer_fd) -> send_message peer_fd (LeaveNetwork self.uuid))
-      !peer_fds
+      !outbound_fds ;
+    Mutex.unlock outbound_fds_mutex
   ) else
-    server server_sock self adj peer_fds peer_fds_mutex ()
+    server server_sock self adj peer_fds peer_fds_mutex outbound_fds
+      outbound_fds_mutex ()

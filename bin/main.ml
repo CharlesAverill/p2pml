@@ -19,19 +19,20 @@ let print_connection_info outbound_fds =
     outbound_fds
 
 let print_help_message () =
-  print_endline {|
+  print_endline
+    {|
 Enter a file to search the network for, or:
 
   !help - print this message
   !exit - leave the network and terminate
   !connections - show the information of connected machines
   !adj - print the network's current adjacency matrix
-
->> |}
+|}
 
 let handle_bang s adj server_sock outbound_fds =
   match s with
-  | "!help" -> print_help_message ()
+  | "!help" ->
+      print_help_message ()
   | "!exit" ->
       kill_server_thread := true ;
       (* Send blank message to initiate server thread death *)
@@ -85,11 +86,17 @@ let () =
     (Unix.ADDR_INET (Unix.inet_addr_of_string "0.0.0.0", port)) ;
   Unix.listen server_sock 64 ;
   let adj = ref adj in
+  (* Create the outbound_fds ref early for the server thread - it won't be 
+     accessed until an exit occurs, well after it is initialized *)
+  let outbound_fds = ref [] in
+  let outbound_fds_mutex = Mutex.create () in
   let _server_thread =
-    Thread.create (server server_sock self adj peer_fds peer_fds_mutex) ()
+    Thread.create
+      (server server_sock self adj peer_fds peer_fds_mutex outbound_fds
+         outbound_fds_mutex )
+      ()
   in
   (* Connect to neighbours concurrently *)
-  let outbound_fds = ref [] in
   let threads =
     List.map
       (fun addr ->
@@ -98,9 +105,11 @@ let () =
             let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
             repeat_try_connect sock (Unix.ADDR_INET (addr, port)) ;
             Mutex.lock peer_fds_mutex ;
+            Mutex.lock outbound_fds_mutex ;
             peer_fds := (addr, sock) :: !peer_fds ;
             outbound_fds := (addr, sock) :: !outbound_fds ;
-            Mutex.unlock peer_fds_mutex )
+            Mutex.unlock peer_fds_mutex ;
+            Mutex.unlock outbound_fds_mutex )
           () )
       neighbour_addrs
   in
@@ -110,9 +119,11 @@ let () =
   while not !kill_server_thread do
     Printf.printf "\n>> %!" ;
     let fn = read_line () in
-    if String.starts_with ~prefix:"!" (String.trim fn) then
-      handle_bang (String.trim fn) !adj server_sock !outbound_fds
-    else
+    if String.starts_with ~prefix:"!" (String.trim fn) then (
+      Mutex.lock outbound_fds_mutex ;
+      handle_bang (String.trim fn) !adj server_sock !outbound_fds ;
+      Mutex.unlock outbound_fds_mutex
+    ) else
       match local_search self fn with
       | Some _ ->
           _log Log_Info "File '%s' is available locally\n%!" fn
